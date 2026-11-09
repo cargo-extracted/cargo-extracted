@@ -1,0 +1,303 @@
+# Sync one channel onto one branch and open or update a pull request. Called
+# by sync.yml once per entry of `sync.py plan`.
+#
+#   channel  nightly | stable
+#   base     the branch the sync lands on: main, or rust-1.XX.0
+#   target   nightly-YYYY-MM-DD, or 1.XX.Y
+#
+# The result is pushed to `sync/<base>`. nightly pull requests auto-merge
+# when SYNC_AUTO_MERGE is `true`, the bot has a real identity and <base>
+# requires status checks. Release pull requests wait for a human; merging one
+# triggers publish.yml.
+name: Sync channel
+
+on:
+  workflow_call:
+    inputs:
+      channel:
+        type: string
+        required: true
+      base:
+        type: string
+        required: true
+      target:
+        type: string
+        required: true
+      open_pr:
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+env:
+  CHANNEL: ${{ inputs.channel }}
+  BASE: ${{ inputs.base }}
+  TARGET: ${{ inputs.target }}
+  BRANCH: sync/${{ inputs.base }}
+
+jobs:
+  sync:
+    name: sync
+    runs-on: ubuntu-latest
+    steps:
+      # Pull requests opened with GITHUB_TOKEN never trigger CI, so a GitHub
+      # App (SYNC_APP_ID + SYNC_APP_PRIVATE_KEY) or a PAT (SYNC_TOKEN) is
+      # needed for anything to merge on its own. Without either the sync still
+      # opens a pull request and skips auto-merge.
+      - name: Mint GitHub App token
+        id: app
+        if: vars.SYNC_APP_ID != ''
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.SYNC_APP_ID }}
+          private-key: ${{ secrets.SYNC_APP_PRIVATE_KEY }}
+      - name: Pick token
+        id: token
+        env:
+          APP_TOKEN: ${{ steps.app.outputs.token }}
+          PAT: ${{ secrets.SYNC_TOKEN }}
+          DEFAULT: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ -n "${APP_TOKEN:-}" ]; then kind=app; token=$APP_TOKEN
+          elif [ -n "${PAT:-}" ]; then kind=pat; token=$PAT
+          else
+            kind=default; token=$DEFAULT
+            echo "::warning::no SYNC_APP_ID/SYNC_APP_PRIVATE_KEY or SYNC_TOKEN configured; pull requests will not get CI and will not auto-merge"
+          fi
+          echo "::add-mask::$token"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
+          echo "kind=$kind" >> "$GITHUB_OUTPUT"
+          echo "using the $kind token"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ steps.token.outputs.token }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Prepare base branch
+        id: prep
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          set -euo pipefail
+          git config user.name "cargo-extracted-bot"
+          git config user.email "cargo-extracted-bot@protonmail.com"
+          # Can the token push at all? A dry run creates nothing but is
+          # checked by GitHub like a real push, so a token without Contents
+          # write fails here with a plain message instead of later.
+          if ! git push --dry-run origin "HEAD:refs/heads/token-probe" >/dev/null 2>&1; then
+            echo "::error::the ${{ steps.token.outputs.kind }} token cannot push to this repository. For a fine-grained PAT, check that Contents is 'Read and write', that the resource owner is the organization, and that the organization has approved it."
+            exit 1
+          fi
+          if git ls-remote --exit-code --heads origin "$BASE" >/dev/null; then
+            git checkout -q -B work "origin/$BASE"
+            echo "created=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # First sync onto a release branch. The branch starts at main's tip,
+          # so it has the current tooling. The patch series comes from the
+          # main commit whose pin is an ancestor of the release, the one
+          # rebased just before Cargo's branch point, so the sync only has
+          # the release branch's backports to absorb.
+          upstream=$(python3 sync/sync.py resolve "$TARGET" | python3 -c 'import json,sys; print(json.load(sys.stdin)["commit"])')
+          point=$(python3 sync/sync.py branch-point "$upstream" --ref origin/main --no-fetch)
+          tip=$(git rev-parse origin/main)
+          echo "cutting $BASE from main (${tip:0:10}) for rust-lang/cargo@${upstream:0:10}"
+          git push origin "$tip:refs/heads/$BASE"
+          git checkout -q -B work "$tip"
+          if [ "$point" != "$tip" ]; then
+            echo "taking the patch series from ${point:0:10}, the last pin before Cargo's branch point"
+            git rm -rq patches && git checkout "$point" -- patches
+          fi
+          echo "created=true" >> "$GITHUB_OUTPUT"
+
+      - name: Sync
+        id: sync
+        run: |
+          set -uo pipefail
+          # Exit codes 2 and 3 are outcomes, not failures; GitHub's shell runs
+          # with -e, so turn it off around the call.
+          set +e
+          python3 sync/sync.py sync "$TARGET" --report "$RUNNER_TEMP/report.json"
+          code=$?
+          set -e
+          case $code in
+            0) status=synced ;;
+            2) status=conflict ;;
+            3) status=unchanged ;;
+            *) echo "::error::sync failed with exit code $code"; exit $code ;;
+          esac
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          python3 - "$RUNNER_TEMP/report.json" >> "$GITHUB_OUTPUT" <<'PY'
+          import json, sys
+          r = json.load(open(sys.argv[1]))
+          print("commit=" + r["commit"])
+          print("crate_version=" + str(r.get("crate_version", "")))
+          PY
+
+      - name: Bump version if already released
+        id: bump
+        if: inputs.channel == 'stable' && steps.sync.outputs.status == 'synced'
+        run: |
+          set -euo pipefail
+          v="${{ steps.sync.outputs.crate_version }}"
+          if git ls-remote --exit-code --tags origin "refs/tags/*-v$v" >/dev/null; then
+            # Same upstream cargo version already published (point release):
+            # take the next free patch number. Tags are per crate.
+            IFS=. read -r a b c <<<"$v"
+            while git ls-remote --exit-code --tags origin "refs/tags/*-v$a.$b.$c" >/dev/null; do c=$((c + 1)); done
+            echo "$v already published; using $a.$b.$c"
+            python3 sync/sync.py sync "$TARGET" --force --version "$a.$b.$c" --report "$RUNNER_TEMP/report.json"
+            echo "crate_version=$a.$b.$c" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Report conflict
+        if: steps.sync.outputs.status == 'conflict'
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          CREATED: ${{ steps.prep.outputs.created }}
+        run: |
+          set -euo pipefail
+          commit="${{ steps.sync.outputs.commit }}"
+          title="Sync conflict: $BASE at cargo@${commit:0:10}"
+          python3 - "$RUNNER_TEMP/report.json" "$BASE" "$TARGET" "$CREATED" > "$RUNNER_TEMP/body.md" <<'PY'
+          import json, sys
+          r = json.load(open(sys.argv[1])); c = r["conflict"]; base, target, created = sys.argv[2:5]
+          print(f"The patch series on `{base}` does not apply to rust-lang/cargo@{r['commit']} "
+                f"(target `{target}`).\n")
+          if created == "true":
+              print(f"This run created `{base}` from `main`, so the branch exists and pull "
+                    "requests can target it; it is not synced yet.\n")
+          print(f"Failed patch: `{c['patch_number']:04d}` {c['patch_subject']}\n")
+          print("Conflicting files:\n")
+          for f in c["files"]: print(f"- `{f}`")
+          topic = f"fix/sync-{base}"
+          print(f"\nTo resolve, on a branch off `{base}`:\n")
+          print("```sh")
+          print(f"git checkout -b {topic} origin/{base}")
+          print(f"python3 sync/sync.py sync {target}   # stops at the conflict")
+          print("cd .sync/work && $EDITOR " + " ".join(c["files"]))
+          print("git add -A && git am --continue && cd -")
+          print("python3 sync/sync.py export-patches")
+          print(f"python3 sync/sync.py sync {target}   # applies; regenerates the tree")
+          print(f"git add -A && git commit -m 'Sync {base} to cargo@{r['commit'][:10]}'")
+          print(f"git push -u origin {topic}")
+          print("```\n")
+          print(f"Then open a pull request into `{base}`. CI's `verify` checks that the patches "
+                "and the regenerated tree agree; merging it closes this issue on the next run.")
+          print("\n<details><summary>git am output</summary>\n\n```\n" + c["output"] + "\n```\n</details>")
+          PY
+          gh label create sync-conflict --color B60205 --description "The sync patch series needs manual attention" --force
+          existing=$(gh issue list --label sync-conflict --state open --search "in:title \"Sync conflict: $BASE\"" --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --title "$title" --body-file "$RUNNER_TEMP/body.md"
+          else
+            gh issue create --title "$title" --body-file "$RUNNER_TEMP/body.md" --label sync-conflict
+          fi
+          echo "::error::$title"
+          exit 1
+
+      - name: Commit and push
+        id: push
+        if: steps.sync.outputs.status == 'synced'
+        run: |
+          set -euo pipefail
+          commit="${{ steps.sync.outputs.commit }}"
+          version="${{ steps.bump.outputs.crate_version || steps.sync.outputs.crate_version }}"
+          if [ "$CHANNEL" = stable ]; then
+            subject="Release cargo-extracted $version (cargo@${commit:0:10})"
+          else
+            subject="Sync $CHANNEL: cargo@${commit:0:10} ($TARGET)"
+          fi
+          git add -A
+          git commit -q -m "$subject" -m "Generated by sync/sync.py from rust-lang/cargo@$commit ($TARGET)."
+          git push --force origin "HEAD:refs/heads/$BRANCH"
+          echo "subject=$subject" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Open or update pull request
+        if: steps.sync.outputs.status == 'synced' && inputs.open_pr
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          TOKEN_KIND: ${{ steps.token.outputs.kind }}
+          AUTO_MERGE: ${{ vars.SYNC_AUTO_MERGE }}
+          CREATED: ${{ steps.prep.outputs.created }}
+        run: |
+          set -euo pipefail
+          title="${{ steps.push.outputs.subject }}"
+          if [ "$CHANNEL" = stable ]; then label=release; else label=sync; fi
+          gh label create sync --color 0E8A16 --description "Automated upstream sync" --force
+          gh label create release --color 1D76DB --description "Publishes a release when merged" --force
+
+          {
+            python3 sync/sync.py markdown "$RUNNER_TEMP/report.json"
+            echo
+            if [ "$CREATED" = true ]; then
+              echo "This run created \`$BASE\`, mirroring Cargo's branch of the same name."
+              echo
+            fi
+            if [ "$TOKEN_KIND" = default ]; then
+              echo "Opened with \`GITHUB_TOKEN\`, so CI did not run on this pull request. Close and reopen it, or push to it, to trigger CI."
+            fi
+          } > "$RUNNER_TEMP/body.md"
+
+          existing=$(gh pr list --head "$BRANCH" --base "$BASE" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" --title "$title" --body-file "$RUNNER_TEMP/body.md"
+            number=$existing
+          else
+            gh pr create --head "$BRANCH" --base "$BASE" --title "$title" --body-file "$RUNNER_TEMP/body.md" --label "$label"
+            number=$(gh pr list --head "$BRANCH" --base "$BASE" --state open --json number --jq '.[0].number')
+          fi
+          echo "pull request #$number: $title" >> "$GITHUB_STEP_SUMMARY"
+
+          # Auto-merge for nightly only, and only when the pull request gets
+          # CI and the base requires checks; otherwise `--auto` would merge at
+          # once.
+          [ "$CHANNEL" != stable ] || exit 0
+          [ "$AUTO_MERGE" = true ] || { echo "SYNC_AUTO_MERGE is not true; leaving the pull request for a human"; exit 0; }
+          if [ "$TOKEN_KIND" = default ]; then
+            echo "::warning::auto-merge skipped: pull requests opened with GITHUB_TOKEN never get CI"
+            exit 0
+          fi
+          required=$(gh api "repos/$GITHUB_REPOSITORY/rules/branches/$BASE" --jq '[.[] | select(.type == "required_status_checks")] | length' 2>/dev/null || echo 0)
+          if [ "$required" = 0 ] && gh api "repos/$GITHUB_REPOSITORY/branches/$BASE/protection/required_status_checks" >/dev/null 2>&1; then
+            required=1
+          fi
+          if [ "$required" = 0 ]; then
+            echo "::warning::auto-merge skipped: $BASE has no required status checks, so it would merge unverified"
+            exit 0
+          fi
+          gh pr merge "$number" --auto --squash || echo "::warning::auto-merge not available; enable 'Allow auto-merge' in repository settings"
+
+      # The series applies to this base again, whether that produced a sync or
+      # found the tree already there, so an open conflict issue is stale.
+      - name: Close conflict issue
+        if: steps.sync.outputs.status == 'synced' || steps.sync.outputs.status == 'unchanged'
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          set -euo pipefail
+          for issue in $(gh issue list --label sync-conflict --state open --search "in:title \"Sync conflict: $BASE\"" --json number --jq '.[].number'); do
+            gh issue close "$issue" --comment "The patch series applies to \`$BASE\` again (${{ steps.sync.outputs.status }} at cargo@${{ steps.sync.outputs.commit }})."
+          done
+
+      - uses: actions/upload-artifact@v4
+        if: steps.sync.outputs.status == 'synced'
+        with:
+          name: sync-report-${{ inputs.base }}
+          path: ${{ runner.temp }}/report.json
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "**$CHANNEL -> \`$BASE\`** ($TARGET): ${{ steps.sync.outputs.status }} at cargo@${{ steps.sync.outputs.commit }}" >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,134 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "rust-*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One run per branch or pull request; a newer push supersedes an older run.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Cargo's own rustfmt.toml and clippy.toml are copied into the tree by
+      # the sync, so the Rust hooks are the checks Cargo runs, on our files too.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+      - run: pip install pre-commit==4.7.0
+      - run: pre-commit run --all-files --show-diff-on-failure
+
+  # The crates are generated: upstream at the commit in upstream.toml plus the
+  # patch series, applied without a three-way merge. This regenerates them and
+  # fails on any difference, so every edit has to live in patches/.
+  generated:
+    name: generated tree matches patches
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Regenerate and compare
+        run: python3 sync/sync.py verify
+
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --locked -p cargo-ext-resolver
+      - name: Test
+        run: cargo test --locked -p cargo-ext-resolver -p resolver-tests
+
+  conformance:
+    name: conformance against pinned cargo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The oracle is the cargo binary built from the upstream commit in
+      # upstream.toml: the dated nightly/beta toolchain, or the stable version.
+      - name: Determine the pinned toolchain
+        id: pin
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import tomllib
+          pin = tomllib.load(open("upstream.toml", "rb"))
+          channel = pin.get("channel")
+          if channel in ("nightly", "beta"):
+              tc = f"{channel}-{pin['channel_date']}"
+          elif channel == "stable":
+              tc = pin["rust_version"].split()[0]
+          else:
+              raise SystemExit(f"cannot pick a toolchain for channel {channel!r}; sync from a channel, not a commit")
+          print(f"toolchain={tc}")
+          PY
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.pin.outputs.toolchain }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Differential tests
+        run: cargo +${{ steps.pin.outputs.toolchain }} test --locked -p conformance
+        env:
+          CONFORMANCE_TOOLCHAIN: ${{ steps.pin.outputs.toolchain }}
+
+  package:
+    name: package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Determine crate version
+        id: version
+        run: |
+          v=$(python3 -c 'import tomllib; print(tomllib.load(open("crates/cargo-resolver/Cargo.toml", "rb"))["package"]["version"])')
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          case "$v" in
+            *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
+            *)   echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+      # Packaging resolves against crates.io, which only works once the Cargo
+      # team has published the sibling crates, at release time. Pre-release
+      # versions skip it.
+      - name: Package
+        if: steps.version.outputs.prerelease == 'false'
+        run: cargo package --locked --no-verify -p cargo-ext-resolver
+      - name: Package skipped
+        if: steps.version.outputs.prerelease == 'true'
+        run: echo "::notice::cargo package skipped for pre-release version ${{ steps.version.outputs.version }}; sibling crates are not on crates.io until a Cargo release"
+      - name: Docs
+        run: cargo doc --locked --no-deps -p cargo-ext-resolver
+        env:
+          RUSTDOCFLAGS: -D warnings

@@ -1,0 +1,156 @@
+# Publish to crates.io when a release branch (`rust-1.XX.0`) changes and the
+# version is stable. Each `[[publish]]` crate whose version is not on
+# crates.io yet is published and tagged `<crate>-v<version>` with a GitHub
+# release, so a crate can join a version that already shipped.
+#
+# Dormant until the repository variable PUBLISH_ENABLED is `true`, and every
+# run waits for approval in the `crates-io` environment. Authentication is
+# CARGO_REGISTRY_TOKEN as an environment secret, or crates.io trusted
+# publishing with the secret unset.
+name: Publish
+
+on:
+  push:
+    branches: ["rust-*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  check:
+    name: check
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      crates: ${{ steps.plan.outputs.crates }}
+      publish: ${{ steps.plan.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Which crates are not on crates.io at this version
+        id: plan
+        run: |
+          python3 - >> "$GITHUB_OUTPUT" <<'PY'
+          import json, tomllib, urllib.request
+          pin = tomllib.load(open("upstream.toml", "rb"))
+          cfg = tomllib.load(open("sync/config.toml", "rb"))
+          version = pin["crate_version"]
+          entries = cfg["publish"] if isinstance(cfg["publish"], list) else [cfg["publish"]]
+          todo = []
+          if pin["channel"] != "stable" or "-" in version:
+              print(f"::notice::{version} on channel {pin['channel']} is never published")
+          else:
+              for e in entries:
+                  url = f"https://crates.io/api/v1/crates/{e['crate']}/{version}"
+                  req = urllib.request.Request(url, headers={"User-Agent": "cargo-extracted-publish"})
+                  try:
+                      urllib.request.urlopen(req, timeout=60)
+                      print(f"::notice::{e['crate']} {version} is already on crates.io")
+                  except urllib.error.HTTPError as err:
+                      if err.code != 404:
+                          raise
+                      todo.append(e["crate"])
+          print(f"version={version}")
+          print(f"crates={json.dumps(todo)}")
+          print(f"publish={'true' if todo else 'false'}")
+          PY
+
+  publish:
+    name: publish ${{ needs.check.outputs.version }}
+    needs: check
+    if: needs.check.outputs.publish == 'true' && vars.PUBLISH_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: crates-io
+      url: https://crates.io/crates/cargo-ext-resolver/${{ needs.check.outputs.version }}
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      VERSION: ${{ needs.check.outputs.version }}
+      CRATES: ${{ needs.check.outputs.crates }}
+    steps:
+      # The tags are pushed with the bot identity when there is one.
+      - name: Mint GitHub App token
+        id: app
+        if: vars.SYNC_APP_ID != ''
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.SYNC_APP_ID }}
+          private-key: ${{ secrets.SYNC_APP_PRIVATE_KEY }}
+      - name: Pick token
+        id: token
+        env:
+          APP_TOKEN: ${{ steps.app.outputs.token }}
+          PAT: ${{ secrets.SYNC_TOKEN }}
+          DEFAULT: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          token="${APP_TOKEN:-${PAT:-$DEFAULT}}"
+          echo "::add-mask::$token"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ steps.token.outputs.token }}
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Check sibling crates are on crates.io
+        run: |
+          python3 - <<'PY'
+          import sys, tomllib, urllib.request
+          pin = tomllib.load(open("upstream.toml", "rb"))
+          missing = []
+          for name, version in sorted(pin.get("siblings", {}).items()):
+              url = f"https://crates.io/api/v1/crates/{name}/{version}"
+              req = urllib.request.Request(url, headers={"User-Agent": "cargo-extracted-publish"})
+              try:
+                  urllib.request.urlopen(req, timeout=60)
+                  print(f"ok      {name} {version}")
+              except Exception as e:  # noqa: BLE001
+                  print(f"missing {name} {version}: {e}")
+                  missing.append(name)
+          if missing:
+              print("::error::the published crates would depend on versions that are not on crates.io: " + ", ".join(missing))
+              sys.exit(1)
+          PY
+
+      - name: Package arguments
+        id: args
+        run: echo "packages=$(python3 -c 'import json,os; print(" ".join("-p " + c for c in json.loads(os.environ["CRATES"])))')" >> "$GITHUB_OUTPUT"
+
+      - name: Dry run
+        run: cargo publish --locked --dry-run ${{ steps.args.outputs.packages }}
+
+      - name: Authenticate with crates.io (trusted publishing)
+        if: env.CARGO_REGISTRY_TOKEN == ''
+        id: auth
+        uses: rust-lang/crates-io-auth-action@v1
+
+      - name: Publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ env.CARGO_REGISTRY_TOKEN || steps.auth.outputs.token }}
+        # Cargo orders the packages by dependency; `[[publish]]` lists them in
+        # that order too.
+        run: cargo publish --locked ${{ steps.args.outputs.packages }}
+
+      - name: Tag and release
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          set -euo pipefail
+          git config user.name "cargo-extracted-bot"
+          git config user.email "cargo-extracted-bot@protonmail.com"
+          for crate in $(python3 -c 'import json,os; print(" ".join(json.loads(os.environ["CRATES"])))'); do
+            tag="$crate-v$VERSION"
+            python3 - "$crate" > "$RUNNER_TEMP/notes.md" <<'PY'
+          import sys, tomllib
+          pin = tomllib.load(open("upstream.toml", "rb")); crate = sys.argv[1]
+          print(f"`{crate}` {pin['crate_version']} is extracted from Cargo as shipped in Rust "
+                f"{pin['rust_version']} (upstream `cargo` {pin['cargo_version']}).\n")
+          print(f"Generated from [rust-lang/cargo@{pin['commit'][:10]}](https://github.com/rust-lang/cargo/commit/{pin['commit']}) "
+                f"with the patch series in `patches/`.")
+          PY
+            git tag -a "$tag" -m "$crate $VERSION"
+            git push origin "$tag"
+            gh release create "$tag" --title "$crate $VERSION" --notes-file "$RUNNER_TEMP/notes.md"
+          done

@@ -1,0 +1,479 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: cargo-extracted-bot <cargo-extracted-bot@protonmail.com>
+Date: Sun, 8 Nov 2026 17:59:22 -0800
+Subject: [PATCH 1/5] Move the resolver into crates/cargo-resolver
+
+`src/resolver` with the types it operates on from `src/workspace` and the
+pieces of `src/util` it cannot be separated from, moved as they are to the
+same paths under `crates/cargo-resolver/src/`, so `crate::` and `super::`
+paths inside them resolve once the crate root declares the same module
+tree. `src/workspace/features.rs` comes along because `Dependency::serialized`
+takes `CliUnstable` and `Features`, and the feature table depends on
+`ResolveBehavior`.
+
+The crate manifest, `lib.rs` and the `mod.rs` files declare that tree and
+re-export what Cargo's `util/mod.rs` and `workspace/mod.rs` re-export. The
+modules they name that are not moved files arrive in the following patches.
+---
+ crates/cargo-resolver/Cargo.toml              | 40 +++++++++
+ crates/cargo-resolver/src/compiler/mod.rs     | 13 +++
+ crates/cargo-resolver/src/lib.rs              | 84 +++++++++++++++++++
+ .../src}/resolver/conflict_cache.rs           |  0
+ .../cargo-resolver/src}/resolver/context.rs   |  0
+ .../cargo-resolver/src}/resolver/dep_cache.rs |  0
+ .../cargo-resolver/src}/resolver/encode.rs    |  0
+ .../cargo-resolver/src}/resolver/errors.rs    |  0
+ .../cargo-resolver/src}/resolver/features.rs  |  0
+ .../cargo-resolver/src}/resolver/mod.rs       |  0
+ .../cargo-resolver/src}/resolver/resolve.rs   |  0
+ .../cargo-resolver/src}/resolver/types.rs     |  0
+ .../src}/resolver/version_prefs.rs            |  0
+ crates/cargo-resolver/src/sources/mod.rs      | 25 ++++++
+ .../cargo-resolver/src}/util/canonical_url.rs |  0
+ .../src}/util/data_structures.rs              |  0
+ .../cargo-resolver/src}/util/edit_distance.rs |  0
+ .../cargo-resolver/src}/util/graph.rs         |  0
+ .../cargo-resolver/src}/util/hasher.rs        |  0
+ .../cargo-resolver/src}/util/hex.rs           |  0
+ .../cargo-resolver/src}/util/interning.rs     |  0
+ .../cargo-resolver/src}/util/into_url.rs      |  0
+ .../src}/util/local_poll_adapter.rs           |  0
+ crates/cargo-resolver/src/util/mod.rs         | 47 +++++++++++
+ .../src}/util/semver_eval_ext.rs              |  0
+ .../cargo-resolver/src}/util/semver_ext.rs    |  0
+ .../cargo-resolver/src}/util/time_span.rs     |  0
+ .../src}/workspace/dependency.rs              |  0
+ .../cargo-resolver/src}/workspace/features.rs |  0
+ crates/cargo-resolver/src/workspace/mod.rs    | 35 ++++++++
+ .../src}/workspace/package_id.rs              |  0
+ .../src}/workspace/package_id_spec.rs         |  0
+ .../src}/workspace/source_id.rs               |  0
+ .../cargo-resolver/src}/workspace/summary.rs  |  0
+ 34 files changed, 244 insertions(+)
+ create mode 100644 crates/cargo-resolver/Cargo.toml
+ create mode 100644 crates/cargo-resolver/src/compiler/mod.rs
+ create mode 100644 crates/cargo-resolver/src/lib.rs
+ rename {src => crates/cargo-resolver/src}/resolver/conflict_cache.rs (100%)
+ rename {src => crates/cargo-resolver/src}/resolver/context.rs (100%)
+ rename {src => crates/cargo-resolver/src}/resolver/dep_cache.rs (100%)
+ rename {src => crates/cargo-resolver/src}/resolver/encode.rs (100%)
+ rename {src => crates/cargo-resolver/src}/resolver/errors.rs (100%)
+ rename {src => crates/cargo-resolver/src}/resolver/features.rs (100%)
+ rename {src => crates/cargo-resolver/src}/resolver/mod.rs (100%)
+ rename {src => crates/cargo-resolver/src}/resolver/resolve.rs (100%)
+ rename {src => crates/cargo-resolver/src}/resolver/types.rs (100%)
+ rename {src => crates/cargo-resolver/src}/resolver/version_prefs.rs (100%)
+ create mode 100644 crates/cargo-resolver/src/sources/mod.rs
+ rename {src => crates/cargo-resolver/src}/util/canonical_url.rs (100%)
+ rename {src => crates/cargo-resolver/src}/util/data_structures.rs (100%)
+ rename {src => crates/cargo-resolver/src}/util/edit_distance.rs (100%)
+ rename {src => crates/cargo-resolver/src}/util/graph.rs (100%)
+ rename {src => crates/cargo-resolver/src}/util/hasher.rs (100%)
+ rename {src => crates/cargo-resolver/src}/util/hex.rs (100%)
+ rename {src => crates/cargo-resolver/src}/util/interning.rs (100%)
+ rename {src => crates/cargo-resolver/src}/util/into_url.rs (100%)
+ rename {src => crates/cargo-resolver/src}/util/local_poll_adapter.rs (100%)
+ create mode 100644 crates/cargo-resolver/src/util/mod.rs
+ rename {src => crates/cargo-resolver/src}/util/semver_eval_ext.rs (100%)
+ rename {src => crates/cargo-resolver/src}/util/semver_ext.rs (100%)
+ rename {src => crates/cargo-resolver/src}/util/time_span.rs (100%)
+ rename {src => crates/cargo-resolver/src}/workspace/dependency.rs (100%)
+ rename {src => crates/cargo-resolver/src}/workspace/features.rs (100%)
+ create mode 100644 crates/cargo-resolver/src/workspace/mod.rs
+ rename {src => crates/cargo-resolver/src}/workspace/package_id.rs (100%)
+ rename {src => crates/cargo-resolver/src}/workspace/package_id_spec.rs (100%)
+ rename {src => crates/cargo-resolver/src}/workspace/source_id.rs (100%)
+ rename {src => crates/cargo-resolver/src}/workspace/summary.rs (100%)
+
+diff --git a/crates/cargo-resolver/Cargo.toml b/crates/cargo-resolver/Cargo.toml
+new file mode 100644
+index 000000000..27b9472c2
+--- /dev/null
++++ b/crates/cargo-resolver/Cargo.toml
+@@ -0,0 +1,40 @@
++[package]
++name = "cargo-ext-resolver"
++version = "0.0.0"
++rust-version = "1.85"  # rewritten from upstream by sync/sync.py
++edition.workspace = true
++license.workspace = true
++repository.workspace = true
++documentation = "https://docs.rs/cargo-ext-resolver"
++description = "Cargo's dependency resolver"
++
++# The library keeps the name of Cargo's module, so code reads as it does
++# upstream: `use cargo_resolver::Summary`.
++[lib]
++name = "cargo_resolver"
++
++[dependencies]
++annotate-snippets.workspace = true
++anyhow.workspace = true
++cargo-platform.workspace = true
++cargo-util-schemas.workspace = true
++futures.workspace = true
++hex.workspace = true
++im-rc.workspace = true
++indexmap.workspace = true
++itertools.workspace = true
++jiff = { workspace = true, features = ["std"] }
++rustc-hash.workspace = true
++rustc-stable-hash.workspace = true
++semver.workspace = true
++serde = { workspace = true, features = ["derive"] }
++serde-untagged.workspace = true
++toml = { workspace = true, features = ["std", "serde", "parse", "display"] }
++tracing = { workspace = true, features = ["attributes"] }
++url.workspace = true
++
++[dev-dependencies]
++snapbox.workspace = true
++
++[lints]
++workspace = true
+diff --git a/crates/cargo-resolver/src/compiler/mod.rs b/crates/cargo-resolver/src/compiler/mod.rs
+new file mode 100644
+index 000000000..8c3129659
+--- /dev/null
++++ b/crates/cargo-resolver/src/compiler/mod.rs
+@@ -0,0 +1,13 @@
++//! The paths Cargo's `compiler` module provides to the moved files.
++//!
++//! [`CompileKind`] and [`CompileTarget`] are copied from Cargo's
++//! `compiler/compile_kind.rs`, without the constructors that run `rustc` or
++//! read configuration. [`RustcTargetData`] stands in for Cargo's, which asks
++//! `rustc` for the `cfg` values of each target; here the embedding
++//! application supplies them.
++
++pub mod compile_kind;
++pub mod target_info;
++
++pub use self::compile_kind::{CompileKind, CompileTarget};
++pub use self::target_info::{Rustc, RustcTargetData};
+diff --git a/crates/cargo-resolver/src/lib.rs b/crates/cargo-resolver/src/lib.rs
+new file mode 100644
+index 000000000..3456b7a9f
+--- /dev/null
++++ b/crates/cargo-resolver/src/lib.rs
+@@ -0,0 +1,84 @@
++//! Cargo's dependency resolver and feature resolver.
++//!
++//! > This crate is maintained by the Cargo team, primarily for use by Cargo
++//! > and not intended for external use (except as a transitive dependency). This
++//! > crate may make major changes to its APIs or be deprecated without warning.
++//!
++//! Published as `cargo-ext-resolver`; the library is `cargo_resolver`, after
++//! Cargo's module. The files are Cargo's, at the paths they have in Cargo's
++//! `src/`: [`resolver`], the types it operates on in [`workspace`], the helpers
++//! in [`util`]. The rest of the module tree is glue, so the moved code is
++//! unchanged: re-exports, and stand-ins with Cargo's method names for what
++//! Cargo has and this crate does not ([`GlobalContext`], [`Workspace`],
++//! [`Package`], [`PackageSet`], [`Target`], [`RustcTargetData`]), which the
++//! embedding application fills from what it knows.
++//!
++//! The entry point is [`resolve`]. It takes the [`Summary`] of each root
++//! package with [`ResolveOpts`], a [`Registry`] to query, [`VersionPreferences`]
++//! and a [`GlobalContext`], and produces a [`Resolve`]; [`encode`] converts
++//! between that and `Cargo.lock`. [`FeatureResolver`] is the second pass.
++//!
++//! The crate performs no I/O; nothing is read from disk or the environment
++//! unless the application puts it in the [`GlobalContext`]. Errors are
++//! [`anyhow::Error`] through the [`CargoResult`] alias.
++
++// Cargo's files are kept verbatim. Imports and items that Cargo uses elsewhere
++// may be unused here, and their docs link to items that stayed in Cargo.
++#![allow(unused_imports, dead_code, rustdoc::broken_intra_doc_links)]
++
++pub use crate::util::errors::InternalError;
++pub use crate::util::{CargoResult, GlobalContext, indented_lines};
++pub use crate::version::version;
++
++pub mod compiler;
++pub mod context;
++pub mod resolver;
++pub mod shell;
++pub mod sources;
++pub mod util;
++mod version;
++pub mod workspace;
++
++// The names consumers reach for, as in Cargo's `cargo::workspace::*`.
++pub use self::compiler::{CompileKind, CompileTarget, Rustc, RustcTargetData};
++pub use self::context::{ConfigKeyPath, Definition, OptValue, Value};
++pub use self::resolver::encode;
++pub use self::resolver::errors;
++pub use self::resolver::errors::{ActivateError, ActivateResult, ResolveError};
++pub use self::resolver::features::{
++    ActivateMap, CliFeatures, DiffMap, FeatureOpts, FeatureResolver, FeaturesFor, ForceAllTargets,
++    HasDevUnits, PackageFeaturesKey, RequestedFeatures, ResolvedFeatures,
++};
++pub use self::resolver::resolve;
++pub use self::resolver::resolve::{Resolve, ResolveVersion};
++pub use self::resolver::types::{FeaturesSet, ResolveBehavior, ResolveOpts};
++pub use self::resolver::version_prefs::{
++    PublishAgePolicy, PublishAgeViolation, VersionOrdering, VersionPreferences,
++};
++pub use self::shell::{ColorChoice, Shell, Verbosity};
++pub use self::sources::source::QueryKind;
++pub use self::sources::{
++    CRATES_IO_DOMAIN, CRATES_IO_HTTP_INDEX, CRATES_IO_INDEX, CRATES_IO_REGISTRY, IndexSummary,
++};
++pub use self::util::edit_distance;
++pub use self::util::graph::Graph;
++pub use self::util::interning;
++pub use self::util::interning::InternedString;
++pub use self::util::into_url::IntoUrl;
++pub use self::util::semver_ext::*;
++pub use self::util::{CanonicalUrl, StableHasher};
++pub use self::version::VersionInfo;
++pub use self::workspace::dependency::{
++    Artifact, ArtifactKind, ArtifactTarget, DepKind, Dependency, Patch, PatchLocation,
++    SerializedDependency,
++};
++pub use self::workspace::features::{CliUnstable, Edition, Feature, Features};
++pub use self::workspace::manifest::Target;
++pub use self::workspace::package::{Package, PackageSet};
++pub use self::workspace::package_id::{PackageId, PackageIdStableHash};
++pub use self::workspace::package_id_spec::PackageIdSpecQuery;
++pub use self::workspace::registry::Registry;
++pub use self::workspace::source_id::{SourceId, SourceIdAsUrl};
++pub use self::workspace::summary::{FeatureMap, FeatureValue, MissingDependencyError, Summary};
++pub use self::workspace::workspace::Workspace;
++pub use self::workspace::{GitReference, PackageIdSpec, SourceKind};
+diff --git a/src/resolver/conflict_cache.rs b/crates/cargo-resolver/src/resolver/conflict_cache.rs
+similarity index 100%
+rename from src/resolver/conflict_cache.rs
+rename to crates/cargo-resolver/src/resolver/conflict_cache.rs
+diff --git a/src/resolver/context.rs b/crates/cargo-resolver/src/resolver/context.rs
+similarity index 100%
+rename from src/resolver/context.rs
+rename to crates/cargo-resolver/src/resolver/context.rs
+diff --git a/src/resolver/dep_cache.rs b/crates/cargo-resolver/src/resolver/dep_cache.rs
+similarity index 100%
+rename from src/resolver/dep_cache.rs
+rename to crates/cargo-resolver/src/resolver/dep_cache.rs
+diff --git a/src/resolver/encode.rs b/crates/cargo-resolver/src/resolver/encode.rs
+similarity index 100%
+rename from src/resolver/encode.rs
+rename to crates/cargo-resolver/src/resolver/encode.rs
+diff --git a/src/resolver/errors.rs b/crates/cargo-resolver/src/resolver/errors.rs
+similarity index 100%
+rename from src/resolver/errors.rs
+rename to crates/cargo-resolver/src/resolver/errors.rs
+diff --git a/src/resolver/features.rs b/crates/cargo-resolver/src/resolver/features.rs
+similarity index 100%
+rename from src/resolver/features.rs
+rename to crates/cargo-resolver/src/resolver/features.rs
+diff --git a/src/resolver/mod.rs b/crates/cargo-resolver/src/resolver/mod.rs
+similarity index 100%
+rename from src/resolver/mod.rs
+rename to crates/cargo-resolver/src/resolver/mod.rs
+diff --git a/src/resolver/resolve.rs b/crates/cargo-resolver/src/resolver/resolve.rs
+similarity index 100%
+rename from src/resolver/resolve.rs
+rename to crates/cargo-resolver/src/resolver/resolve.rs
+diff --git a/src/resolver/types.rs b/crates/cargo-resolver/src/resolver/types.rs
+similarity index 100%
+rename from src/resolver/types.rs
+rename to crates/cargo-resolver/src/resolver/types.rs
+diff --git a/src/resolver/version_prefs.rs b/crates/cargo-resolver/src/resolver/version_prefs.rs
+similarity index 100%
+rename from src/resolver/version_prefs.rs
+rename to crates/cargo-resolver/src/resolver/version_prefs.rs
+diff --git a/crates/cargo-resolver/src/sources/mod.rs b/crates/cargo-resolver/src/sources/mod.rs
+new file mode 100644
+index 000000000..08d37940b
+--- /dev/null
++++ b/crates/cargo-resolver/src/sources/mod.rs
+@@ -0,0 +1,25 @@
++//! The paths Cargo's `sources` module provides to the moved files.
++//!
++//! Cargo's sources stay in Cargo. What the resolver uses from here is the
++//! crates.io constants, [`IndexSummary`] and [`QueryKind`], which are copied,
++//! and names it imports but no longer calls, which are empty stand-ins so the
++//! import lines resolve.
++
++pub mod path;
++pub mod registry;
++pub mod source;
++
++pub use self::path::{PathSource, RecursivePathSource};
++pub use self::registry::{
++    CRATES_IO_DOMAIN, CRATES_IO_HTTP_INDEX, CRATES_IO_INDEX, CRATES_IO_REGISTRY, IndexSummary,
++    RegistrySource,
++};
++pub use self::source::{QueryKind, Source};
++
++/// Cargo's `DirectorySource`. Only named by an import here; see the module docs.
++#[doc(hidden)]
++pub struct DirectorySource;
++
++/// Cargo's `GitSource`. Only named by an import here; see the module docs.
++#[doc(hidden)]
++pub struct GitSource;
+diff --git a/src/util/canonical_url.rs b/crates/cargo-resolver/src/util/canonical_url.rs
+similarity index 100%
+rename from src/util/canonical_url.rs
+rename to crates/cargo-resolver/src/util/canonical_url.rs
+diff --git a/src/util/data_structures.rs b/crates/cargo-resolver/src/util/data_structures.rs
+similarity index 100%
+rename from src/util/data_structures.rs
+rename to crates/cargo-resolver/src/util/data_structures.rs
+diff --git a/src/util/edit_distance.rs b/crates/cargo-resolver/src/util/edit_distance.rs
+similarity index 100%
+rename from src/util/edit_distance.rs
+rename to crates/cargo-resolver/src/util/edit_distance.rs
+diff --git a/src/util/graph.rs b/crates/cargo-resolver/src/util/graph.rs
+similarity index 100%
+rename from src/util/graph.rs
+rename to crates/cargo-resolver/src/util/graph.rs
+diff --git a/src/util/hasher.rs b/crates/cargo-resolver/src/util/hasher.rs
+similarity index 100%
+rename from src/util/hasher.rs
+rename to crates/cargo-resolver/src/util/hasher.rs
+diff --git a/src/util/hex.rs b/crates/cargo-resolver/src/util/hex.rs
+similarity index 100%
+rename from src/util/hex.rs
+rename to crates/cargo-resolver/src/util/hex.rs
+diff --git a/src/util/interning.rs b/crates/cargo-resolver/src/util/interning.rs
+similarity index 100%
+rename from src/util/interning.rs
+rename to crates/cargo-resolver/src/util/interning.rs
+diff --git a/src/util/into_url.rs b/crates/cargo-resolver/src/util/into_url.rs
+similarity index 100%
+rename from src/util/into_url.rs
+rename to crates/cargo-resolver/src/util/into_url.rs
+diff --git a/src/util/local_poll_adapter.rs b/crates/cargo-resolver/src/util/local_poll_adapter.rs
+similarity index 100%
+rename from src/util/local_poll_adapter.rs
+rename to crates/cargo-resolver/src/util/local_poll_adapter.rs
+diff --git a/crates/cargo-resolver/src/util/mod.rs b/crates/cargo-resolver/src/util/mod.rs
+new file mode 100644
+index 000000000..8c0ed032a
+--- /dev/null
++++ b/crates/cargo-resolver/src/util/mod.rs
+@@ -0,0 +1,47 @@
++//! The paths Cargo's `util` module provides to the moved files.
++//!
++//! The files declared here are Cargo's. The re-exports follow Cargo's
++//! `util/mod.rs`; `errors` and `network` are the pieces of it the moved code
++//! uses, copied.
++
++pub use self::canonical_url::CanonicalUrl;
++pub use self::edit_distance::{closest, closest_msg, edit_distance};
++pub use self::errors::{CargoResult, InternalError, internal};
++pub use self::graph::Graph;
++pub use self::hasher::StableHasher;
++pub use self::hex::{hash_u64, short_hash, to_hex};
++pub use self::into_url::IntoUrl;
++pub use self::semver_ext::*;
++pub use crate::context::GlobalContext;
++
++pub mod canonical_url;
++pub mod data_structures;
++pub mod edit_distance;
++pub mod errors;
++pub mod graph;
++mod hasher;
++pub mod hex;
++pub mod interning;
++pub mod into_url;
++mod local_poll_adapter;
++pub use local_poll_adapter::LocalPollAdapter;
++pub mod network;
++pub mod semver_eval_ext;
++pub mod semver_ext;
++pub mod time_span;
++
++pub(crate) use futures::executor::block_on;
++pub(crate) use futures::executor::block_on_stream;
++
++/// From Cargo's `util/mod.rs`.
++pub fn indented_lines(text: &str) -> String {
++    text.lines()
++        .map(|line| {
++            if line.is_empty() {
++                String::from("\n")
++            } else {
++                format!("  {}\n", line)
++            }
++        })
++        .collect()
++}
+diff --git a/src/util/semver_eval_ext.rs b/crates/cargo-resolver/src/util/semver_eval_ext.rs
+similarity index 100%
+rename from src/util/semver_eval_ext.rs
+rename to crates/cargo-resolver/src/util/semver_eval_ext.rs
+diff --git a/src/util/semver_ext.rs b/crates/cargo-resolver/src/util/semver_ext.rs
+similarity index 100%
+rename from src/util/semver_ext.rs
+rename to crates/cargo-resolver/src/util/semver_ext.rs
+diff --git a/src/util/time_span.rs b/crates/cargo-resolver/src/util/time_span.rs
+similarity index 100%
+rename from src/util/time_span.rs
+rename to crates/cargo-resolver/src/util/time_span.rs
+diff --git a/src/workspace/dependency.rs b/crates/cargo-resolver/src/workspace/dependency.rs
+similarity index 100%
+rename from src/workspace/dependency.rs
+rename to crates/cargo-resolver/src/workspace/dependency.rs
+diff --git a/src/workspace/features.rs b/crates/cargo-resolver/src/workspace/features.rs
+similarity index 100%
+rename from src/workspace/features.rs
+rename to crates/cargo-resolver/src/workspace/features.rs
+diff --git a/crates/cargo-resolver/src/workspace/mod.rs b/crates/cargo-resolver/src/workspace/mod.rs
+new file mode 100644
+index 000000000..0217ef490
+--- /dev/null
++++ b/crates/cargo-resolver/src/workspace/mod.rs
+@@ -0,0 +1,35 @@
++//! The paths Cargo's `workspace` module provides to the moved files.
++//!
++//! `dependency`, `features`, `package_id`, `package_id_spec`, `source_id` and
++//! `summary` are Cargo's files. `registry` is the [`Registry`] trait, copied
++//! from Cargo's `workspace/registry.rs` without the `PackageRegistry` that
++//! implements it over Cargo's sources. `manifest`, `package` and `workspace`
++//! are stand-ins for Cargo's `Target`, `Package`, `PackageSet` and
++//! `Workspace`: the methods the moved code calls, over data the embedding
++//! application supplies. `parser` holds the one parser function `SourceId`
++//! calls.
++
++pub use self::dependency::{Dependency, Patch, PatchLocation, SerializedDependency};
++pub use self::features::{CliUnstable, Edition, Feature, Features};
++pub use self::manifest::Target;
++pub use self::package::{Package, PackageSet};
++pub use self::package_id::PackageId;
++pub use self::package_id_spec::PackageIdSpecQuery;
++pub use self::registry::Registry;
++pub use self::source_id::SourceId;
++pub use self::summary::{FeatureMap, FeatureValue, Summary};
++pub use self::workspace::Workspace;
++
++pub use cargo_util_schemas::core::{GitReference, PackageIdSpec, SourceKind};
++
++pub mod dependency;
++pub mod features;
++pub mod manifest;
++pub mod package;
++pub mod package_id;
++pub mod package_id_spec;
++pub mod parser;
++pub mod registry;
++pub mod source_id;
++pub mod summary;
++pub mod workspace;
+diff --git a/src/workspace/package_id.rs b/crates/cargo-resolver/src/workspace/package_id.rs
+similarity index 100%
+rename from src/workspace/package_id.rs
+rename to crates/cargo-resolver/src/workspace/package_id.rs
+diff --git a/src/workspace/package_id_spec.rs b/crates/cargo-resolver/src/workspace/package_id_spec.rs
+similarity index 100%
+rename from src/workspace/package_id_spec.rs
+rename to crates/cargo-resolver/src/workspace/package_id_spec.rs
+diff --git a/src/workspace/source_id.rs b/crates/cargo-resolver/src/workspace/source_id.rs
+similarity index 100%
+rename from src/workspace/source_id.rs
+rename to crates/cargo-resolver/src/workspace/source_id.rs
+diff --git a/src/workspace/summary.rs b/crates/cargo-resolver/src/workspace/summary.rs
+similarity index 100%
+rename from src/workspace/summary.rs
+rename to crates/cargo-resolver/src/workspace/summary.rs

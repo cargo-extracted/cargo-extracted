@@ -1,0 +1,64 @@
+# Configuration for sync/sync.py. See README.md for the overall model.
+
+[upstream]
+# Where Cargo's sources are fetched from. A local path also works
+# (handy for development: `--repo ~/Code/cargo`).
+repo = "https://github.com/rust-lang/cargo.git"
+
+[repository]
+# Written as `repository` in the generated workspace manifest and therefore
+# into the published crate's metadata.
+url = "https://github.com/cargo-extracted/cargo-extracted"
+
+# The crates this repository publishes. The version is the upstream Cargo
+# version. Package names carry an `ext` marker so they are not mistaken for
+# crates the Cargo team publishes; the directory and library name are
+# Cargo's, and `alias` is the dependency key consumers and other crates use
+# (`cargo-resolver = { package = "cargo-ext-resolver", ... }`).
+[[publish]]
+crate = "cargo-ext-resolver"
+alias = "cargo-resolver"
+manifest = "crates/cargo-resolver/Cargo.toml"
+
+# Directories copied verbatim from the patched upstream checkout into this
+# repository. Keys are destinations here, values are paths in upstream.
+[export]
+"crates/cargo-resolver" = "crates/cargo-resolver"
+"crates/resolver-tests" = "crates/resolver-tests"
+
+# Workspace members maintained by hand. They are in Cargo.lock, so `verify`
+# copies them into its scratch tree before regenerating the lock.
+[verify]
+keep = ["crates/conformance"]
+
+# Crates that live in the Cargo repository and are published by the Cargo
+# team. The published crates depend on their crates.io releases. Upstream bumps
+# their versions weeks before they are published, so for every channel other
+# than stable the generated workspace adds a `[patch.crates-io]` entry that
+# builds them from the same upstream commit. Nothing is copied into this
+# repository and the published crate is unaffected.
+[siblings]
+crates = ["cargo-platform", "cargo-util", "cargo-util-schemas"]
+
+# Upstream files partly copied by hand into a crate, because only a fraction
+# was wanted. Git cannot merge upstream changes to these, so every sync
+# reports the upstream commits touching them. Keys are upstream paths, values
+# the copies.
+[drift]
+"src/workspace/registry.rs" = "crates/cargo-resolver/src/workspace/registry.rs"
+"src/workspace/parser/mod.rs" = "crates/cargo-resolver/src/workspace/parser.rs"
+"src/workspace/workspace.rs" = "crates/cargo-resolver/src/workspace/workspace.rs"
+"src/workspace/package.rs" = "crates/cargo-resolver/src/workspace/package.rs"
+"src/workspace/manifest.rs" = "crates/cargo-resolver/src/workspace/manifest.rs"
+"src/sources/registry/index/mod.rs" = "crates/cargo-resolver/src/sources/registry.rs"
+"src/sources/registry/mod.rs" = "crates/cargo-resolver/src/sources/registry.rs"
+"src/sources/source.rs" = "crates/cargo-resolver/src/sources/source.rs"
+"src/compiler/compile_kind.rs" = "crates/cargo-resolver/src/compiler/compile_kind.rs"
+"src/compiler/build_context/target_info.rs" = "crates/cargo-resolver/src/compiler/target_info.rs"
+"src/context/mod.rs" = "crates/cargo-resolver/src/context/mod.rs"
+"src/context/value.rs" = "crates/cargo-resolver/src/context/value.rs"
+"src/util/errors.rs" = "crates/cargo-resolver/src/util/errors.rs"
+"src/util/mod.rs" = "crates/cargo-resolver/src/util/mod.rs"
+"src/util/network/mod.rs" = "crates/cargo-resolver/src/util/network/mod.rs"
+"src/version.rs" = "crates/cargo-resolver/src/version.rs"
+"crates/cargo-util-terminal/src/shell.rs" = "crates/cargo-resolver/src/shell.rs"

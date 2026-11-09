@@ -1,0 +1,136 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: cargo-extracted-bot <cargo-extracted-bot@protonmail.com>
+Date: Sun, 8 Nov 2026 17:59:23 -0800
+Subject: [PATCH 5/5] Drop what cannot exist outside Cargo
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+`SourceId::load` builds a `Source`, and two `Edition` helpers take a
+`ProcessBuilder`; each gets a `#[cfg(any())]`, which removes it from the
+build like a deletion but touches only its header, so upstream edits inside
+them merge through. The `cargo_util` import only they used is marked the
+same way. Public: the `resolver` submodules, and `Artifact::parse` and
+`Dependency::set_artifact`, which the manifest parser calls. One doc example
+is pointed at this crate. `resolver-tests` depends on the crate under the
+name `cargo`, so its files, written against `cargo::…`, are unchanged.
+---
+ crates/cargo-resolver/src/resolver/mod.rs        | 16 ++++++++--------
+ .../cargo-resolver/src/workspace/dependency.rs   |  4 ++--
+ crates/cargo-resolver/src/workspace/features.rs  |  3 +++
+ crates/cargo-resolver/src/workspace/source_id.rs |  3 ++-
+ crates/resolver-tests/Cargo.toml                 |  2 +-
+ 5 files changed, 16 insertions(+), 12 deletions(-)
+
+diff --git a/crates/cargo-resolver/src/resolver/mod.rs b/crates/cargo-resolver/src/resolver/mod.rs
+index ce1ca941e..5a0f32223 100644
+--- a/crates/cargo-resolver/src/resolver/mod.rs
++++ b/crates/cargo-resolver/src/resolver/mod.rs
+@@ -86,15 +86,15 @@ pub use self::version_prefs::PublishAgeViolation;
+ pub use self::version_prefs::VersionOrdering;
+ pub use self::version_prefs::VersionPreferences;
+ 
+-mod conflict_cache;
+-mod context;
+-mod dep_cache;
+-pub(crate) mod encode;
+-pub(crate) mod errors;
++pub mod conflict_cache;
++pub mod context;
++pub mod dep_cache;
++pub mod encode;
++pub mod errors;
+ pub mod features;
+-mod resolve;
+-mod types;
+-mod version_prefs;
++pub mod resolve;
++pub mod types;
++pub mod version_prefs;
+ 
+ /// Builds the list of all packages required to build the first argument.
+ ///
+diff --git a/crates/cargo-resolver/src/workspace/dependency.rs b/crates/cargo-resolver/src/workspace/dependency.rs
+index 345c384c4..01781ab21 100644
+--- a/crates/cargo-resolver/src/workspace/dependency.rs
++++ b/crates/cargo-resolver/src/workspace/dependency.rs
+@@ -451,7 +451,7 @@ impl Dependency {
+         self
+     }
+ 
+-    pub(crate) fn set_artifact(&mut self, artifact: Artifact) {
++    pub fn set_artifact(&mut self, artifact: Artifact) {
+         Arc::make_mut(&mut self.inner).artifact = Some(artifact);
+     }
+ 
+@@ -502,7 +502,7 @@ impl ser::Serialize for Artifact {
+ }
+ 
+ impl Artifact {
+-    pub(crate) fn parse(
++    pub fn parse(
+         artifacts: &[impl AsRef<str>],
+         is_lib: bool,
+         target: Option<&str>,
+diff --git a/crates/cargo-resolver/src/workspace/features.rs b/crates/cargo-resolver/src/workspace/features.rs
+index 70e425346..7226cb58e 100644
+--- a/crates/cargo-resolver/src/workspace/features.rs
++++ b/crates/cargo-resolver/src/workspace/features.rs
+@@ -125,6 +125,7 @@ use std::path::PathBuf;
+ use std::str::FromStr;
+ 
+ use anyhow::{Error, bail};
++#[cfg(any())] // takes a `ProcessBuilder`; this crate does not run processes
+ use cargo_util::ProcessBuilder;
+ use serde::{Deserialize, Serialize};
+ use tracing::debug;
+@@ -275,6 +276,7 @@ impl Edition {
+ 
+     /// Updates the given [`ProcessBuilder`] to include the appropriate flags
+     /// for setting the edition.
++    #[cfg(any())] // takes a `ProcessBuilder`
+     pub(crate) fn cmd_edition_arg(&self, cmd: &mut ProcessBuilder) {
+         cmd.arg(format!("--edition={}", self));
+         if !self.is_stable() {
+@@ -283,6 +285,7 @@ impl Edition {
+     }
+ 
+     /// Adds the appropriate argument to generate warnings for this edition.
++    #[cfg(any())] // takes a `ProcessBuilder`
+     pub(crate) fn force_warn_arg(&self, cmd: &mut ProcessBuilder) {
+         use Edition::*;
+         match self {
+diff --git a/crates/cargo-resolver/src/workspace/source_id.rs b/crates/cargo-resolver/src/workspace/source_id.rs
+index 3a35a6730..5bfbda073 100644
+--- a/crates/cargo-resolver/src/workspace/source_id.rs
++++ b/crates/cargo-resolver/src/workspace/source_id.rs
+@@ -145,7 +145,7 @@ impl SourceId {
+     /// ## Example
+     ///
+     /// ```
+-    /// use cargo::workspace::SourceId;
++    /// use cargo_resolver::workspace::SourceId;
+     /// SourceId::from_url("git+https://github.com/alexcrichton/\
+     ///                     libssh2-static-sys#80e71a3021618eb05\
+     ///                     656c58fb7c5ef5f12bc747f");
+@@ -396,6 +396,7 @@ impl SourceId {
+     }
+ 
+     /// Creates an implementation of `Source` corresponding to this ID.
++    #[cfg(any())] // builds a `Source`; Cargo's sources stay in Cargo
+     pub fn load<'a>(self, gctx: &'a GlobalContext) -> CargoResult<Box<dyn Source + 'a>> {
+         trace!("loading SourceId; {}", self);
+         match self.inner.kind {
+diff --git a/crates/resolver-tests/Cargo.toml b/crates/resolver-tests/Cargo.toml
+index 2deddc0c9..a60379ee1 100644
+--- a/crates/resolver-tests/Cargo.toml
++++ b/crates/resolver-tests/Cargo.toml
+@@ -5,7 +5,7 @@ edition.workspace = true
+ publish = false
+ 
+ [dependencies]
+-cargo.workspace = true
++cargo = { package = "cargo-ext-resolver", path = "../cargo-resolver" }
+ cargo-platform.workspace = true
+ cargo-util-schemas.workspace = true
+ cargo-util.workspace = true

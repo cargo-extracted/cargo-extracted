@@ -1,0 +1,40 @@
+[package]
+name = "cargo-ext-resolver"
+version = "0.102.0-nightly"
+rust-version = "1.99"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+documentation = "https://docs.rs/cargo-ext-resolver"
+description = "Cargo's dependency resolver"
+
+# The library keeps the name of Cargo's module, so code reads as it does
+# upstream: `use cargo_resolver::Summary`.
+[lib]
+name = "cargo_resolver"
+
+[dependencies]
+annotate-snippets.workspace = true
+anyhow.workspace = true
+cargo-platform.workspace = true
+cargo-util-schemas.workspace = true
+futures.workspace = true
+hex.workspace = true
+im-rc.workspace = true
+indexmap.workspace = true
+itertools.workspace = true
+jiff = { workspace = true, features = ["std"] }
+rustc-hash.workspace = true
+rustc-stable-hash.workspace = true
+semver.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde-untagged.workspace = true
+toml = { workspace = true, features = ["std", "serde", "parse", "display"] }
+tracing = { workspace = true, features = ["attributes"] }
+url.workspace = true
+
+[dev-dependencies]
+snapbox.workspace = true
+
+[lints]
+workspace = true

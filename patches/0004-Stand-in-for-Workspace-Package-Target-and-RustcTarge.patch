@@ -1,0 +1,499 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: cargo-extracted-bot <cargo-extracted-bot@protonmail.com>
+Date: Sun, 8 Nov 2026 17:59:22 -0800
+Subject: [PATCH 4/5] Stand in for Workspace, Package, Target and
+ RustcTargetData
+
+The lock file encoder walks workspace members and their path dependencies
+and reads `[patch]` and `[replace]`; the feature resolver asks which
+members to resolve for, whether a package's library is a proc-macro, and
+whether a dependency's platform applies to a compile kind. Cargo answers
+from manifests on disk and from `rustc --print cfg`. These types have the
+methods the moved code calls, over what the embedding application supplies.
+`RecursivePathSource`, which Cargo uses to suggest packages near a missing
+path dependency, finds nothing.
+---
+ .../src/compiler/target_info.rs               |  91 ++++++++++++
+ crates/cargo-resolver/src/sources/path.rs     |  38 +++++
+ .../cargo-resolver/src/workspace/manifest.rs  |  54 +++++++
+ .../cargo-resolver/src/workspace/package.rs   | 121 +++++++++++++++
+ .../cargo-resolver/src/workspace/workspace.rs | 138 ++++++++++++++++++
+ 5 files changed, 442 insertions(+)
+ create mode 100644 crates/cargo-resolver/src/compiler/target_info.rs
+ create mode 100644 crates/cargo-resolver/src/sources/path.rs
+ create mode 100644 crates/cargo-resolver/src/workspace/manifest.rs
+ create mode 100644 crates/cargo-resolver/src/workspace/package.rs
+ create mode 100644 crates/cargo-resolver/src/workspace/workspace.rs
+
+diff --git a/crates/cargo-resolver/src/compiler/target_info.rs b/crates/cargo-resolver/src/compiler/target_info.rs
+new file mode 100644
+index 000000000..87e557dc2
+--- /dev/null
++++ b/crates/cargo-resolver/src/compiler/target_info.rs
+@@ -0,0 +1,91 @@
++//! Stand-in for Cargo's `RustcTargetData`.
++//!
++//! Cargo learns the `cfg` values of the host and of each `--target` by
++//! running `rustc --print cfg`, and the feature resolver asks it whether a
++//! dependency's `[target.'cfg(..)']` platform applies to a compile kind. Here
++//! the embedding application supplies the same information, and the question
++//! is answered the way Cargo answers it.
++
++use crate::util::data_structures::HashMap;
++
++use cargo_platform::Cfg;
++
++use crate::compiler::{CompileKind, CompileTarget};
++use crate::util::errors::CargoResult;
++use crate::util::interning::InternedString;
++use crate::workspace::Dependency;
++
++/// What the feature resolver reads of Cargo's `Rustc`: the host triple.
++#[derive(Clone, Debug)]
++pub struct Rustc {
++    /// The host triple, what `rustc -vV` reports as `host:`.
++    pub host: InternedString,
++}
++
++/// The `cfg` values of the host and of each compile target.
++pub struct RustcTargetData<'gctx> {
++    /// Information about `rustc` itself.
++    pub rustc: Rustc,
++    host_cfg: Vec<Cfg>,
++    target_cfg: HashMap<CompileTarget, Vec<Cfg>>,
++    _marker: std::marker::PhantomData<&'gctx ()>,
++}
++
++impl<'gctx> RustcTargetData<'gctx> {
++    /// Target data for a host with the given triple and `cfg` values.
++    ///
++    /// `host_cfg` is what `rustc --print cfg` prints without `--target`.
++    pub fn new(host: impl Into<InternedString>, host_cfg: Vec<Cfg>) -> RustcTargetData<'gctx> {
++        RustcTargetData {
++            rustc: Rustc { host: host.into() },
++            host_cfg,
++            target_cfg: HashMap::default(),
++            _marker: std::marker::PhantomData,
++        }
++    }
++
++    /// Adds a compile target with its `cfg` values, what
++    /// `rustc --print cfg --target <target>` prints.
++    pub fn add_target(&mut self, target: CompileTarget, cfg: Vec<Cfg>) {
++        self.target_cfg.insert(target, cfg);
++    }
++
++    /// Cargo asks `rustc` about a target the first time an artifact
++    /// dependency names it. Here a target not added with
++    /// [`RustcTargetData::add_target`] is known by its name alone, with no
++    /// `cfg` values.
++    pub fn merge_compile_kind(&mut self, kind: CompileKind) -> CargoResult<()> {
++        if let CompileKind::Target(target) = kind {
++            self.target_cfg.entry(target).or_default();
++        }
++        Ok(())
++    }
++
++    /// Gets the short name of the compile kind, like `x86_64-unknown-linux-gnu`.
++    pub fn short_name<'a>(&'a self, kind: &'a CompileKind) -> &'a str {
++        match kind {
++            CompileKind::Host => &self.rustc.host,
++            CompileKind::Target(target) => target.short_name(),
++        }
++    }
++
++    /// Gets the list of `cfg`s printed out from the compiler for the specified kind.
++    pub fn cfg(&self, kind: CompileKind) -> &[Cfg] {
++        match kind {
++            CompileKind::Host => &self.host_cfg,
++            CompileKind::Target(target) => self.target_cfg.get(&target).map_or(&[], |c| c),
++        }
++    }
++
++    /// Whether a dependency's `[target.'cfg(..)']` platform (if any) applies to
++    /// `kind`, exactly as Cargo decides it.
++    pub fn dep_platform_activated(&self, dep: &Dependency, kind: CompileKind) -> bool {
++        // If this dependency is only available for certain platforms,
++        // make sure we're only enabling it for that platform.
++        let Some(platform) = dep.platform() else {
++            return true;
++        };
++        let name = self.short_name(&kind);
++        platform.matches(name, self.cfg(kind))
++    }
++}
+diff --git a/crates/cargo-resolver/src/sources/path.rs b/crates/cargo-resolver/src/sources/path.rs
+new file mode 100644
+index 000000000..27b26fa9e
+--- /dev/null
++++ b/crates/cargo-resolver/src/sources/path.rs
+@@ -0,0 +1,38 @@
++//! Stand-ins for Cargo's path sources.
++//!
++//! When a path dependency cannot be found, Cargo scans the directory for
++//! packages to suggest. That reads manifests from disk, which this crate
++//! does not do, so [`RecursivePathSource`] finds nothing and the error is
++//! reported without suggestions.
++
++use std::path::Path;
++
++use crate::context::GlobalContext;
++use crate::util::errors::CargoResult;
++use crate::workspace::{Package, SourceId};
++
++/// Cargo's `PathSource`. Only named by an import here.
++#[doc(hidden)]
++pub struct PathSource;
++
++/// Cargo's `RecursivePathSource`, reduced to finding nothing.
++pub struct RecursivePathSource<'gctx> {
++    source_id: SourceId,
++    path: std::path::PathBuf,
++    gctx: &'gctx GlobalContext,
++}
++
++impl<'gctx> RecursivePathSource<'gctx> {
++    pub fn new(root: &Path, source_id: SourceId, gctx: &'gctx GlobalContext) -> Self {
++        Self {
++            source_id,
++            path: root.to_path_buf(),
++            gctx,
++        }
++    }
++
++    /// The packages under the root. Always empty here; see the module docs.
++    pub fn read_packages(&self) -> CargoResult<Vec<Package>> {
++        Ok(Vec::new())
++    }
++}
+diff --git a/crates/cargo-resolver/src/workspace/manifest.rs b/crates/cargo-resolver/src/workspace/manifest.rs
+new file mode 100644
+index 000000000..9370ee2bc
+--- /dev/null
++++ b/crates/cargo-resolver/src/workspace/manifest.rs
+@@ -0,0 +1,54 @@
++//! Stand-in for Cargo's `Target`, as far as the resolver looks at one.
++//!
++//! The feature resolver asks whether a package's library is a proc-macro, and
++//! the lock file code derives an `extern crate` name from a target's name.
++//! Cargo's `Target` carries much more (source path, edition, crate types,
++//! which commands build it); none of that reaches the resolver.
++
++use crate::util::interning::InternedString;
++
++/// A build target of a package: the part of Cargo's `Target` the resolver uses.
++#[derive(Clone, Debug, PartialEq, Eq, Hash)]
++pub struct Target {
++    name: InternedString,
++    is_lib: bool,
++    proc_macro: bool,
++}
++
++impl Target {
++    /// A library target, `proc_macro` if it is a `proc-macro = true` one.
++    pub fn lib(name: impl Into<InternedString>, proc_macro: bool) -> Target {
++        Target {
++            name: name.into(),
++            is_lib: true,
++            proc_macro,
++        }
++    }
++
++    /// Any other target (a binary, example, test, bench or build script).
++    ///
++    /// Examples can be proc-macros too; the feature resolver counts them.
++    pub fn other(name: impl Into<InternedString>, proc_macro: bool) -> Target {
++        Target {
++            name: name.into(),
++            is_lib: false,
++            proc_macro,
++        }
++    }
++
++    pub fn name(&self) -> &str {
++        &self.name
++    }
++
++    pub fn crate_name(&self) -> String {
++        self.name().replace("-", "_")
++    }
++
++    pub fn is_lib(&self) -> bool {
++        self.is_lib
++    }
++
++    pub fn proc_macro(&self) -> bool {
++        self.proc_macro
++    }
++}
+diff --git a/crates/cargo-resolver/src/workspace/package.rs b/crates/cargo-resolver/src/workspace/package.rs
+new file mode 100644
+index 000000000..bace599af
+--- /dev/null
++++ b/crates/cargo-resolver/src/workspace/package.rs
+@@ -0,0 +1,121 @@
++//! Stand-ins for Cargo's `Package` and `PackageSet`, as far as the resolver
++//! looks at them.
++//!
++//! Cargo's `Package` is a parsed manifest with its path; its `PackageSet`
++//! downloads packages on demand. The resolver only reads a package's id, its
++//! dependencies and its targets, so a [`Package`] here is a [`Summary`] plus
++//! a manifest path and the targets, and a [`PackageSet`] is a map of them.
++
++use crate::util::data_structures::HashMap;
++use std::path::{Path, PathBuf};
++
++use crate::util::errors::CargoResult;
++use crate::util::interning::InternedString;
++use crate::workspace::manifest::Target;
++use crate::workspace::{Dependency, PackageId, Summary};
++
++/// A package: the part of Cargo's `Package` the resolver uses.
++#[derive(Clone, Debug)]
++pub struct Package {
++    summary: Summary,
++    manifest_path: PathBuf,
++    targets: Vec<Target>,
++}
++
++impl Package {
++    /// A package from its [`Summary`], the path of its `Cargo.toml`, and its
++    /// build targets.
++    pub fn new(
++        summary: Summary,
++        manifest_path: impl Into<PathBuf>,
++        targets: Vec<Target>,
++    ) -> Package {
++        Package {
++            summary,
++            manifest_path: manifest_path.into(),
++            targets,
++        }
++    }
++
++    /// Gets the summary this package was built from.
++    pub fn summary(&self) -> &Summary {
++        &self.summary
++    }
++
++    /// Gets the package's dependencies.
++    pub fn dependencies(&self) -> &[Dependency] {
++        self.summary.dependencies()
++    }
++
++    /// Gets the path to the manifest.
++    pub fn manifest_path(&self) -> &Path {
++        &self.manifest_path
++    }
++
++    /// Gets the name of the package.
++    pub fn name(&self) -> InternedString {
++        self.package_id().name()
++    }
++
++    /// Gets the `PackageId` object for this package (fully defines a package).
++    pub fn package_id(&self) -> PackageId {
++        self.summary.package_id()
++    }
++
++    /// Gets the root folder of the package.
++    pub fn root(&self) -> &Path {
++        self.manifest_path().parent().unwrap()
++    }
++
++    /// Gets the targets specified in the manifest.
++    pub fn targets(&self) -> &[Target] {
++        &self.targets
++    }
++
++    /// Gets the library target, if any.
++    pub fn library(&self) -> Option<&Target> {
++        self.targets().iter().find(|t| t.is_lib())
++    }
++
++    /// Returns `true` if any of the package's targets is a proc-macro.
++    pub fn proc_macro(&self) -> bool {
++        self.targets().iter().any(|target| target.proc_macro())
++    }
++}
++
++/// A set of packages, looked up by id: the part of Cargo's `PackageSet` the
++/// feature resolver uses.
++#[derive(Debug)]
++pub struct PackageSet<'gctx> {
++    packages: HashMap<PackageId, Package>,
++    _marker: std::marker::PhantomData<&'gctx ()>,
++}
++
++impl<'gctx> PackageSet<'gctx> {
++    /// A set holding `packages`.
++    pub fn new(packages: impl IntoIterator<Item = Package>) -> PackageSet<'gctx> {
++        PackageSet {
++            packages: packages.into_iter().map(|p| (p.package_id(), p)).collect(),
++            _marker: std::marker::PhantomData,
++        }
++    }
++
++    /// Adds a package to the set, replacing any with the same id.
++    pub fn insert(&mut self, package: Package) {
++        self.packages.insert(package.package_id(), package);
++    }
++
++    pub fn package_ids(&self) -> impl Iterator<Item = PackageId> + '_ {
++        self.packages.keys().cloned()
++    }
++
++    pub fn packages(&self) -> impl Iterator<Item = &Package> {
++        self.packages.values()
++    }
++
++    pub fn get_one(&self, id: PackageId) -> CargoResult<&Package> {
++        self.packages
++            .get(&id)
++            .ok_or_else(|| anyhow::format_err!("package `{id}` is not in the package set"))
++    }
++}
+diff --git a/crates/cargo-resolver/src/workspace/workspace.rs b/crates/cargo-resolver/src/workspace/workspace.rs
+new file mode 100644
+index 000000000..0bf9088d6
+--- /dev/null
++++ b/crates/cargo-resolver/src/workspace/workspace.rs
+@@ -0,0 +1,138 @@
++//! Stand-in for Cargo's `Workspace`, as far as the resolver looks at one.
++//!
++//! The lock file code walks the workspace members and their path
++//! dependencies to tell which lock entries are path packages, and reads the
++//! `[patch]` and `[replace]` tables. The feature resolver asks for the
++//! resolver behavior and which members (with which features) to resolve for.
++//! Cargo's `Workspace` discovers all of that from manifests on disk; here the
++//! embedding application supplies it.
++
++use crate::util::data_structures::HashMap;
++use std::path::Path;
++
++use url::Url;
++
++use crate::context::GlobalContext;
++use crate::resolver::{CliFeatures, ResolveBehavior};
++use crate::util::errors::CargoResult;
++use crate::workspace::dependency::Patch;
++use crate::workspace::package_id_spec::PackageIdSpecQuery;
++use crate::workspace::{Dependency, Package, PackageIdSpec};
++
++/// A workspace: the part of Cargo's `Workspace` the resolver uses.
++pub struct Workspace<'gctx> {
++    gctx: &'gctx GlobalContext,
++    members: Vec<Package>,
++    /// Path packages that are not members but may be reached through path
++    /// dependencies, by manifest path; see [`Workspace::load`].
++    path_packages: HashMap<std::path::PathBuf, Package>,
++    root_patch: HashMap<Url, Vec<Patch>>,
++    root_replace: Vec<(PackageIdSpec, Dependency)>,
++    resolve_behavior: ResolveBehavior,
++}
++
++impl<'gctx> Workspace<'gctx> {
++    /// A workspace with the given members.
++    ///
++    /// The resolver behavior defaults to that of the newest edition, as it
++    /// does when a manifest does not set `resolver`; see
++    /// [`Workspace::set_resolve_behavior`].
++    pub fn new(gctx: &'gctx GlobalContext, members: Vec<Package>) -> Workspace<'gctx> {
++        Workspace {
++            gctx,
++            members,
++            path_packages: HashMap::default(),
++            root_patch: HashMap::default(),
++            root_replace: Vec::new(),
++            resolve_behavior: ResolveBehavior::V2,
++        }
++    }
++
++    pub fn gctx(&self) -> &'gctx GlobalContext {
++        self.gctx
++    }
++
++    /// Sets what Cargo derives from the root manifest's `resolver` key and
++    /// edition.
++    pub fn set_resolve_behavior(&mut self, behavior: ResolveBehavior) {
++        self.resolve_behavior = behavior;
++    }
++
++    /// Sets the root manifest's `[patch]` table, keyed by the URL of the
++    /// patched source as Cargo keys it.
++    pub fn set_root_patch(&mut self, patch: HashMap<Url, Vec<Patch>>) {
++        self.root_patch = patch;
++    }
++
++    /// Sets the root manifest's `[replace]` table.
++    pub fn set_root_replace(&mut self, replace: Vec<(PackageIdSpec, Dependency)>) {
++        self.root_replace = replace;
++    }
++
++    /// Makes a path package outside the members known, so that
++    /// [`Workspace::load`] finds it when the lock file code follows a path
++    /// dependency to it.
++    pub fn add_path_package(&mut self, package: Package) {
++        self.path_packages
++            .insert(package.manifest_path().to_path_buf(), package);
++    }
++
++    /// Returns an iterator over all packages in this workspace
++    pub fn members(&self) -> impl Iterator<Item = &Package> {
++        self.members.iter()
++    }
++
++    pub fn root_patch(&self) -> CargoResult<HashMap<Url, Vec<Patch>>> {
++        Ok(self.root_patch.clone())
++    }
++
++    pub fn root_replace(&self) -> &[(PackageIdSpec, Dependency)] {
++        &self.root_replace
++    }
++
++    pub fn resolve_behavior(&self) -> ResolveBehavior {
++        self.resolve_behavior
++    }
++
++    /// Loads the package at `manifest_path`.
++    ///
++    /// Cargo reads the manifest. Here the package must have been supplied, as
++    /// a member or through [`Workspace::add_path_package`]; otherwise this
++    /// fails, and the lock file code treats the path dependency as absent,
++    /// which drops its entry from the lock file.
++    pub fn load(&self, manifest_path: &Path) -> CargoResult<Package> {
++        if let Some(pkg) = self.path_packages.get(manifest_path) {
++            return Ok(pkg.clone());
++        }
++        if let Some(pkg) = self
++            .members
++            .iter()
++            .find(|p| p.manifest_path() == manifest_path)
++        {
++            return Ok(pkg.clone());
++        }
++        anyhow::bail!(
++            "package at `{}` is not known to this workspace",
++            manifest_path.display()
++        )
++    }
++
++    /// Returns the members to resolve features for, with the features
++    /// requested of each.
++    ///
++    /// Cargo's version also handles the `--features` syntax that names a
++    /// member in a virtual workspace and the error cases around it. Here:
++    /// with no `specs` every member gets `cli_features`; with `specs`, the
++    /// members matching one do.
++    pub fn members_with_features(
++        &self,
++        specs: &[PackageIdSpec],
++        cli_features: &CliFeatures,
++    ) -> CargoResult<Vec<(&Package, CliFeatures)>> {
++        Ok(self
++            .members()
++            .filter(|pkg| specs.is_empty() || specs.iter().any(|s| s.matches(pkg.package_id())))
++            .map(|pkg| (pkg, cli_features.clone()))
++            .collect())
++    }
++}
