@@ -1,0 +1,35 @@
+# Tooling configuration for the Python in sync/. There is no Python package
+# here; this file only configures ruff and mypy, which pre-commit and CI run.
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = [".sync", "target", "crates"]
+
+[tool.ruff.lint]
+select = [
+  "E",
+  "W",    # pycodestyle
+  "F",    # pyflakes
+  "I",    # isort
+  "UP",   # pyupgrade
+  "B",    # bugbear
+  "SIM",  # simplify
+  "ISC",  # implicit string concatenation
+  "PERF", # perflint
+  "FURB", # refurb
+  "RUF",  # ruff-specific
+  "D",    # pydocstyle: every module, class and public function is documented
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.isort]
+known-first-party = ["sync"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["sync"]
+exclude = ["^\\.sync/", "^target/"]

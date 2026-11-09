@@ -1,0 +1,11 @@
+# TOML formatting for the files written by hand here. The generated files and
+# the ones copied from Cargo keep Cargo's layout.
+exclude = [
+  "Cargo.toml",
+  "upstream.toml",
+  "clippy.toml",
+  "rustfmt.toml",
+  "crates/resolver-tests/**",
+  ".sync/**",
+  "target/**",
+]

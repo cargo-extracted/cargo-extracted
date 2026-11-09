@@ -1,0 +1,36 @@
+# The checks CI runs, in one place. `pip install pre-commit && pre-commit install`
+# runs them before each commit; `pre-commit run --all-files` runs them now.
+# rustfmt and clippy use the toolchain on PATH, which has to be at least the
+# crate's `rust-version`.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.0
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v2.4.0
+    hooks:
+      - id: mypy
+        pass_filenames: false
+        files: ^(sync/.*\.py|pyproject\.toml)$
+  - repo: https://github.com/ComPWA/taplo-pre-commit
+    rev: v0.9.3
+    hooks:
+      - id: taplo-format
+        args: [--check]
+  - repo: local
+    hooks:
+      - id: rustfmt
+        name: rustfmt
+        entry: cargo fmt --all --check
+        language: system
+        pass_filenames: false
+        types: [rust]
+      - id: clippy
+        name: clippy
+        entry: cargo clippy --workspace --all-targets --no-deps -- -D warnings
+        language: system
+        pass_filenames: false
+        types: [rust]
