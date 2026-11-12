@@ -85,13 +85,18 @@ impl<'de> de::Deserialize<'de> for PackageId {
             .ok_or_else(|| de::Error::custom("invalid serialized PackageId"))?;
         let version = field.parse().map_err(de::Error::custom)?;
 
-        let url = rest
-            .strip_circumfix('(', ')')
-            .ok_or_else(|| de::Error::custom("invalid serialized PackageId"))?;
+        let url =
+            strip_parens(rest).ok_or_else(|| de::Error::custom("invalid serialized PackageId"))?;
         let source_id = SourceId::from_url(url).map_err(de::Error::custom)?;
 
         Ok(PackageId::new(name, version, source_id))
     }
+}
+
+fn strip_parens(value: &str) -> Option<&str> {
+    let value = value.strip_prefix('(')?;
+    let value = value.strip_suffix(')')?;
+    Some(value)
 }
 
 impl PartialEq for PackageId {
@@ -174,12 +179,8 @@ impl PackageId {
     /// packages. This helps with reproducible builds, since this hash is part
     /// of the symbol metadata, and we don't want the absolute path where the
     /// build is performed to affect the binary output.
-    pub fn stable_hash(self, workspace: &Path, trim_paths: bool) -> PackageIdStableHash<'_> {
-        PackageIdStableHash {
-            id: self,
-            workspace,
-            trim_paths,
-        }
+    pub fn stable_hash(self, workspace: &Path) -> PackageIdStableHash<'_> {
+        PackageIdStableHash(self, workspace)
     }
 
     /// Filename of the `.crate` tarball, e.g., `once_cell-1.18.0.crate`.
@@ -197,23 +198,13 @@ impl PackageId {
     }
 }
 
-pub struct PackageIdStableHash<'a> {
-    id: PackageId,
-    /// Workspace root path.
-    workspace: &'a Path,
-    /// Whether trim-paths profile is enabled
-    /// i.e., paths are trimmed in rustc output artifacts.
-    trim_paths: bool,
-}
+pub struct PackageIdStableHash<'a>(PackageId, &'a Path);
 
 impl<'a> Hash for PackageIdStableHash<'a> {
     fn hash<S: hash::Hasher>(&self, state: &mut S) {
-        self.id.inner.name.hash(state);
-        self.id.inner.version.hash(state);
-        self.id
-            .inner
-            .source_id
-            .stable_hash(self.workspace, self.trim_paths, state);
+        self.0.inner.name.hash(state);
+        self.0.inner.version.hash(state);
+        self.0.inner.source_id.stable_hash(self.1, state);
     }
 }
 
