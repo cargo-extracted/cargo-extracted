@@ -51,10 +51,10 @@ index ce1ca941e..5a0f32223 100644
  /// Builds the list of all packages required to build the first argument.
  ///
 diff --git a/crates/cargo-resolver/src/workspace/dependency.rs b/crates/cargo-resolver/src/workspace/dependency.rs
-index 345c384c4..01781ab21 100644
+index e1a11236f..2eadb87b7 100644
 --- a/crates/cargo-resolver/src/workspace/dependency.rs
 +++ b/crates/cargo-resolver/src/workspace/dependency.rs
-@@ -451,7 +451,7 @@ impl Dependency {
+@@ -447,7 +447,7 @@ impl Dependency {
          self
      }
  
@@ -63,7 +63,7 @@ index 345c384c4..01781ab21 100644
          Arc::make_mut(&mut self.inner).artifact = Some(artifact);
      }
  
-@@ -502,7 +502,7 @@ impl ser::Serialize for Artifact {
+@@ -498,7 +498,7 @@ impl ser::Serialize for Artifact {
  }
  
  impl Artifact {
@@ -73,7 +73,7 @@ index 345c384c4..01781ab21 100644
          is_lib: bool,
          target: Option<&str>,
 diff --git a/crates/cargo-resolver/src/workspace/features.rs b/crates/cargo-resolver/src/workspace/features.rs
-index 70e425346..7226cb58e 100644
+index 132644cb0..afa4e3b16 100644
 --- a/crates/cargo-resolver/src/workspace/features.rs
 +++ b/crates/cargo-resolver/src/workspace/features.rs
 @@ -125,6 +125,7 @@ use std::path::PathBuf;
@@ -101,7 +101,7 @@ index 70e425346..7226cb58e 100644
          use Edition::*;
          match self {
 diff --git a/crates/cargo-resolver/src/workspace/source_id.rs b/crates/cargo-resolver/src/workspace/source_id.rs
-index 3a35a6730..5bfbda073 100644
+index aaf736a69..be707ac39 100644
 --- a/crates/cargo-resolver/src/workspace/source_id.rs
 +++ b/crates/cargo-resolver/src/workspace/source_id.rs
 @@ -145,7 +145,7 @@ impl SourceId {
@@ -113,7 +113,7 @@ index 3a35a6730..5bfbda073 100644
      /// SourceId::from_url("git+https://github.com/alexcrichton/\
      ///                     libssh2-static-sys#80e71a3021618eb05\
      ///                     656c58fb7c5ef5f12bc747f");
-@@ -396,6 +396,7 @@ impl SourceId {
+@@ -389,6 +389,7 @@ impl SourceId {
      }
  
      /// Creates an implementation of `Source` corresponding to this ID.
