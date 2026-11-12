@@ -60,7 +60,7 @@ releases.
 ```sh
 python3 sync/sync.py sync nightly --lag 1    # yesterday's nightly, what the Sync workflow does
 python3 sync/sync.py sync stable             # the current stable release
-python3 sync/sync.py sync 1.99.0             # a specific release
+python3 sync/sync.py sync 1.99.1             # a specific release
 python3 sync/sync.py sync 3960fa69b          # a specific Cargo commit
 python3 sync/sync.py plan                    # what the Sync workflow would do, per branch
 python3 sync/sync.py verify                  # the tree is exactly upstream plus patches
@@ -181,7 +181,8 @@ release branches automatically; cherry-pick them, as Cargo backports.
   toolchain, docs with warnings denied, `cargo package` for release
   versions.
 - `sync.yml`: run by hand. `sync.py plan` decides which branch each
-  channel lands on; `_sync-channel.yml` runs once per entry and opens or
+  channel lands on (`channels` also takes a release such as `1.99.1`, for a
+  branch behind the current stable); `_sync-channel.yml` runs once per entry and opens or
   updates the pull request, or a `sync-conflict` issue.
 - `publish.yml`: when a `rust-*` branch changes with a stable version.
   For each crate whose version is not on crates.io: checks the sibling
@@ -218,6 +219,11 @@ reviewers.
   upstream checkout and trips over its own malformed test fixtures. Noise.
 - Cargo itself is not built from the patched tree; only the crate is
   exported.
-- Release pull requests depend on the Cargo team publishing the sibling
-  crates first; `cargo package` is skipped for pre-release versions and the
-  publish workflow checks crates.io.
+- The Cargo team publishes the sibling crates around each release, sometimes
+  after it. A stable sync builds the ones crates.io does not have yet from
+  upstream's git and records them as `siblings_from_git` in `upstream.toml`,
+  so the release branch and its pull request exist on release day; `verify`
+  reproduces that choice from the pin. The publish workflow refuses such a
+  tree: once the siblings are published, run `sync <version> --force` on the
+  branch and merge that, which drops the git entries, then publish. `cargo
+  package` is skipped for pre-release versions for the same reason.

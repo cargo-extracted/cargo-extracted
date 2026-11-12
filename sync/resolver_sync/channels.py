@@ -146,8 +146,9 @@ def plan(channels: list[str], lag: int) -> list[Toml]:
     ``nightly`` tracks ``main`` through the dated manifest ``lag`` days back.
     ``stable`` tracks the release branch named after its Rust version, as
     Cargo names its own, through the manifest of its exact version; the
-    branch is cut when the release first appears. ``beta`` is accepted and
-    maps to the same branch name, for a sync by hand.
+    branch is cut when the release first appears. An explicit release such
+    as ``1.99.1`` does the same for a release that is no longer the current
+    stable. ``beta`` is accepted and maps to the same branch name.
 
     Returns:
         One dict per sync to run, with ``channel``, ``base``, ``target`` and the
@@ -155,7 +156,8 @@ def plan(channels: list[str], lag: int) -> list[Toml]:
     """
     entries: dict[str, Toml] = {}
     for channel in channels:
-        info = resolve_target(channel, lag if channel != "stable" else 0)
+        explicit = re.fullmatch(r"\d+\.\d+\.\d+", channel) is not None
+        info = resolve_target(channel, 0 if channel == "stable" or explicit else lag)
         if channel == "nightly":
             base, target = "main", str(info["target"])
         elif channel == "beta":
@@ -163,7 +165,7 @@ def plan(channels: list[str], lag: int) -> list[Toml]:
         else:
             version = str(info["rust_version"]).split()[0]
             base, target = release_branch(version), version
-        if base in entries and channel != "stable":
+        if base in entries and info["channel"] != "stable":
             continue
-        entries[base] = {**info, "channel": channel, "base": base, "target": target}
+        entries[base] = {**info, "channel": str(info["channel"]), "base": base, "target": target}
     return list(entries.values())

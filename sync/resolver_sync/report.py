@@ -93,8 +93,8 @@ def format_report(report: Toml) -> str:
             "### Release checklist",
             "",
             (
-                "Merging this pull request into `stable` triggers the publish workflow, "
-                "which waits for approval in the `crates-io` environment before uploading."
+                "Merging this pull request triggers the publish workflow, which waits for "
+                "approval in the `crates-io` environment before uploading."
             ),
             "",
             "- [ ] CI is green on all platforms",
@@ -105,6 +105,20 @@ def format_report(report: Toml) -> str:
             "- [ ] Upstream changes to hand-maintained files below have been reviewed",
             "",
         ]
+        from_git = (report.get("pin") or {}).get("siblings_from_git") or []
+        if from_git:
+            names = ", ".join(f"`{n}`" for n in from_git)
+            rust = str(report.get("rust_version") or "<version>").split()[0]
+            lines += [
+                (
+                    f"crates.io did not have {names} at the versions this Cargo requires when "
+                    "this was synced, so the tree builds them from upstream's git "
+                    "(`siblings_from_git` in `upstream.toml`). The publish workflow refuses "
+                    f"that; once the Cargo team has published them, run `sync/sync.py sync "
+                    f"{rust} --force` on this branch and merge the result before publishing."
+                ),
+                "",
+            ]
     changed = report.get("patches_changed") or []
     if changed:
         lines += [

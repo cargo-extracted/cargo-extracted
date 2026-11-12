@@ -142,10 +142,10 @@ def cmd_sync(args: argparse.Namespace) -> int:
     if args.keep_work:
         add_build_aliases(cfg)
 
-    crate_version, upstream_version, siblings = regenerate(
+    crate_version, upstream_version, siblings, from_git = regenerate(
         cfg, info, commit, args.version, ROOT, lock=not args.no_lock
     )
-    new_pin = write_pin(cfg, info, commit, crate_version, upstream_version, siblings)
+    new_pin = write_pin(cfg, info, commit, crate_version, upstream_version, siblings, from_git)
 
     report.update(
         {
@@ -215,7 +215,15 @@ def cmd_verify(args: argparse.Namespace) -> int:
         if not src.exists():
             raise SyncError(f"[verify] keep lists {rel}, which does not exist")
         shutil.copytree(src, VERIFY / rel, ignore=shutil.ignore_patterns("target"))
-    regenerate(cfg, info, commit, str(pin["crate_version"]), VERIFY, lock=not args.no_lock)
+    regenerate(
+        cfg,
+        info,
+        commit,
+        str(pin["crate_version"]),
+        VERIFY,
+        lock=not args.no_lock,
+        siblings_from_git=list(pin.get("siblings_from_git", [])),
+    )
     problems = compare_trees(cfg, VERIFY, lock=not args.no_lock)
     if not args.keep_work:
         remove_worktree()
@@ -296,8 +304,10 @@ def cmd_plan(args: argparse.Namespace) -> int:
     """Print the sync matrix for the scheduled workflow as JSON."""
     channels = [c.strip() for c in args.channels.split(",") if c.strip()]
     for c in channels:
-        if c not in ("nightly", "beta", "stable"):
-            raise SyncError(f"unknown channel {c!r}")
+        if c not in ("nightly", "beta", "stable") and not re.fullmatch(r"\d+\.\d+\.\d+", c):
+            raise SyncError(
+                f"unknown channel {c!r}; nightly, beta, stable or a release like 1.99.1"
+            )
     print(json.dumps(plan(channels, args.lag), indent=2))
     return EXIT_OK
 
@@ -381,7 +391,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument(
         "--channels",
         default="nightly,stable",
-        help="comma-separated subset of nightly, stable, beta (default: nightly,stable)",
+        help="comma-separated: nightly, stable, beta, or a release such as 1.99.1 "
+        "(default: nightly,stable)",
     )
     s.add_argument("--lag", type=int, default=1, metavar="DAYS", help=lag_help)
     s.set_defaults(fn=cmd_plan)

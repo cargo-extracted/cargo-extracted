@@ -40,6 +40,12 @@ jobs:
           todo = []
           if pin["channel"] != "stable" or "-" in version:
               print(f"::notice::{version} on channel {pin['channel']} is never published")
+          elif pin.get("siblings_from_git"):
+              print("::error::the tree builds " + ", ".join(pin["siblings_from_git"]) + " from upstream's git "
+                    "because crates.io did not have them at sync time; once the Cargo team has published them, "
+                    f"run `sync/sync.py sync {pin['rust_version'].split()[0]} --force` on this branch and merge "
+                    "that before publishing")
+              raise SystemExit(1)
           else:
               for e in entries:
                   url = f"https://crates.io/api/v1/crates/{e['crate']}/{version}"
