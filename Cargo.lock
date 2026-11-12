@@ -163,7 +163,7 @@ dependencies = [
 
 [[package]]
 name = "cargo-ext-resolver"
-version = "0.102.0-nightly"
+version = "0.101.0"
 dependencies = [
  "annotate-snippets",
  "anyhow",
@@ -188,8 +188,9 @@ dependencies = [
 
 [[package]]
 name = "cargo-platform"
-version = "0.3.5"
-source = "git+https://github.com/rust-lang/cargo.git?rev=c07ac2c4d12237effc4b94f4543769b421790045#c07ac2c4d12237effc4b94f4543769b421790045"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd0061da739915fae12ea00e16397555ed4371a6bb285431aab930f61b0aa4ba"
 dependencies = [
  "serde",
  "serde_core",
@@ -197,8 +198,8 @@ dependencies = [
 
 [[package]]
 name = "cargo-util"
-version = "0.3.0"
-source = "git+https://github.com/rust-lang/cargo.git?rev=c07ac2c4d12237effc4b94f4543769b421790045#c07ac2c4d12237effc4b94f4543769b421790045"
+version = "0.2.33"
+source = "git+https://github.com/rust-lang/cargo.git?rev=3acc79c0c841844675bc53a605922dbfc441e750#3acc79c0c841844675bc53a605922dbfc441e750"
 dependencies = [
  "anyhow",
  "core-foundation",
@@ -220,8 +221,8 @@ dependencies = [
 
 [[package]]
 name = "cargo-util-schemas"
-version = "0.16.0"
-source = "git+https://github.com/rust-lang/cargo.git?rev=c07ac2c4d12237effc4b94f4543769b421790045#c07ac2c4d12237effc4b94f4543769b421790045"
+version = "0.15.0"
+source = "git+https://github.com/rust-lang/cargo.git?rev=3acc79c0c841844675bc53a605922dbfc441e750#3acc79c0c841844675bc53a605922dbfc441e750"
 dependencies = [
  "jiff",
  "semver",

@@ -570,7 +570,7 @@ features! {
     (stable, edition2024, "1.85", "reference/manifest.html#the-edition-field"),
 
     /// Allow setting trim-paths in a profile to control the sanitisation of file paths in build outputs.
-    (stable, trim_paths, "1.101", "reference/profiles.html#trim-paths"),
+    (unstable, trim_paths, "", "reference/unstable.html#profile-trim-paths-option"),
 
     /// Allow multiple packages to participate in the same API namespace
     (unstable, open_namespaces, "", "reference/unstable.html#open-namespaces"),
@@ -907,11 +907,9 @@ unstable_cli_options!(
     git: Option<GitFeatures> = ("Enable support for shallow git fetch operations"),
     #[serde(deserialize_with = "deserialize_gitoxide_features")]
     gitoxide: Option<GitoxideFeatures> = ("Use gitoxide for the given git interactions, or all of them if no argument is given"),
-    hint_min_opt_level: bool = ("Enable the `hints.min-opt-level` manifest key"),
     hint_msrv: bool = ("Enable passing `package.rust-version` to rustc for lints"),
     host_config: bool = ("Enable the `[host]` section in the .cargo/config.toml file"),
     json_target_spec: bool = ("Enable `.json` target spec files"),
-    mem_stats: bool = ("Report peak memory usage per build unit in --timings output"),
     minimal_versions: bool = ("Resolve minimal dependency versions instead of maximum"),
     msrv_policy: bool = ("Enable rust-version aware policy within cargo"),
     mtime_on_use: bool = ("Configure Cargo to update the mtime of used files"),
@@ -936,6 +934,7 @@ unstable_cli_options!(
     separate_nightlies: bool,
     skip_rustdoc_fingerprint: bool,
     target_applies_to_host: bool = ("Enable the `target-applies-to-host` key in the .cargo/config.toml file"),
+    trim_paths: bool = ("Enable the `trim-paths` option in profiles"),
     unstable_options: bool = ("Allow the usage of unstable options"),
 );
 
@@ -1033,8 +1032,6 @@ const STABILIZED_BUILD_DIR_NEW_LAYOUT: &str = "build.build-dir-new-layout is now
 
 const STABILIZED_MIN_PUBLISH_AGE: &str =
     "The `min-publish-age` configuration is now always available.";
-
-const STABILIZED_TRIM_PATHS: &str = "The `trim-paths` profile option is now always available.";
 
 fn deserialize_comma_separated_list<'de, D>(
     deserializer: D,
@@ -1415,7 +1412,6 @@ impl CliUnstable {
             "build-dir-new-layout" => stabilized_warn(k, "1.100", STABILIZED_BUILD_DIR_NEW_LAYOUT),
             "cargo-lints" => stabilized_warn(k, "1.100", STABILIZED_CARGO_LINTS),
             "min-publish-age" => stabilized_warn(k, "1.100", STABILIZED_MIN_PUBLISH_AGE),
-            "trim-paths" => stabilized_warn(k, "1.101", STABILIZED_TRIM_PATHS),
 
             // Unstable features
             // Sorted alphabetically:
@@ -1449,12 +1445,10 @@ impl CliUnstable {
                     |v| parse_gitoxide(v.split(',')),
                 )?
             }
-            "hint-min-opt-level" => self.hint_min_opt_level = parse_empty(k, v)?,
             "host-config" => self.host_config = parse_empty(k, v)?,
             "json-target-spec" => self.json_target_spec = parse_empty(k, v)?,
             "hint-msrv" => self.hint_msrv = parse_empty(k, v)?,
             "next-lockfile-bump" => self.next_lockfile_bump = parse_empty(k, v)?,
-            "mem-stats" => self.mem_stats = parse_empty(k, v)?,
             "minimal-versions" => self.minimal_versions = parse_empty(k, v)?,
             "msrv-policy" => self.msrv_policy = parse_empty(k, v)?,
             // can also be set in .cargo/config or with and ENV
@@ -1465,6 +1459,7 @@ impl CliUnstable {
             "public-dependency" => self.public_dependency = parse_empty(k, v)?,
             "profile-hint-mostly-unused" => self.profile_hint_mostly_unused = parse_empty(k, v)?,
             "profile-rustflags" => self.profile_rustflags = parse_empty(k, v)?,
+            "trim-paths" => self.trim_paths = parse_empty(k, v)?,
             "publish-timeout" => self.publish_timeout = parse_empty(k, v)?,
             "root-dir" => self.root_dir = v.map(|v| v.into()),
             "rustc-unicode" => self.rustc_unicode = parse_empty(k, v)?,
@@ -1599,31 +1594,6 @@ pub fn channel() -> String {
         .unwrap_or_else(|| String::from("dev"))
 }
 
-/// Whether both Cargo and rustc are nightly/dev builds.
-///
-/// Unlike [`channel`], this ignores `RUSTC_BOOTSTRAP`,
-/// so that nightly-only changes we test against don't leak into stable when `RUSTC_BOOTSTRAP=1`.
-pub fn is_nightly_toolchain(rustc_version: &semver::Version) -> bool {
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "testing only, no reason for config support"
-    )]
-    let channel = env::var("__CARGO_TEST_CHANNEL_OVERRIDE_DO_NOT_USE_THIS")
-        .ok()
-        .or_else(|| crate::version().release_channel);
-    let cargo_nightly = matches!(channel.as_deref(), Some("nightly" | "dev"));
-    let rustc_nightly = matches!(rustc_version.pre.as_str(), "dev" | "nightly");
-    cargo_nightly && rustc_nightly
-}
-
-#[expect(
-    clippy::disallowed_methods,
-    reason = "Temporary opt out that is not part of the public interface"
-)]
-pub fn is_stop_rlib_uplift_opt_out() -> bool {
-    env::var("__CARGO_TEMPORARY_STOP_RLIB_UPLIFT_OPT_OUT").as_deref() == Ok("1")
-}
-
 #[expect(
     clippy::disallowed_methods,
     reason = "Temporary opt out that is not part of the public interface"
@@ -1635,11 +1605,10 @@ fn is_new_build_dir_layout_opt_out() -> bool {
 /// Generate a link to Cargo documentation for the current release channel
 /// `path` is the URL component after `https://doc.rust-lang.org/{channel}/cargo/`
 pub fn cargo_docs_link(path: &str) -> String {
-    let version = crate::version().version;
     let url_channel = match channel().as_str() {
-        "dev" | "nightly" => "nightly",
-        "beta" => "beta",
-        _ => version.as_str(),
+        "dev" | "nightly" => "nightly/",
+        "beta" => "beta/",
+        _ => "",
     };
-    format!("https://doc.rust-lang.org/{url_channel}/cargo/{path}")
+    format!("https://doc.rust-lang.org/{url_channel}cargo/{path}")
 }

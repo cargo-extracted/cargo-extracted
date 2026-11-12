@@ -176,7 +176,6 @@ impl SourceId {
                 let url = url.into_url()?;
                 SourceId::new(SourceKind::Path, url, None)
             }
-            "builtin" => SourceId::for_builtin(),
             kind => Err(anyhow::format_err!("unsupported source protocol: {}", kind)),
         }
     }
@@ -203,12 +202,6 @@ impl SourceId {
     pub fn for_path(path: &Path) -> CargoResult<SourceId> {
         let url = path.into_url()?;
         SourceId::new(SourceKind::Path, url, None)
-    }
-
-    /// Creates a `SourceId` for the builtin packages in the configured toolchain.
-    pub fn for_builtin() -> CargoResult<SourceId> {
-        let url = "builtin://.".into_url()?;
-        SourceId::new(SourceKind::Builtin, url, None)
     }
 
     /// Creates a `SourceId` from a filesystem path.
@@ -412,7 +405,6 @@ impl SourceId {
                 }
                 Ok(Box::new(PathSource::new(&path, self, gctx)))
             }
-            SourceKind::Builtin => todo!("builtin source"),
             SourceKind::Registry | SourceKind::SparseRegistry => {
                 Ok(Box::new(RegistrySource::remote(self, gctx)?))
             }
@@ -558,14 +550,9 @@ impl SourceId {
     /// For git and url, `as_str` gives the serialisation of a url (which has a spec) and so
     /// insulates against possible changes in how the url crate does hashing.
     ///
-    /// For path dependencies, we do these to help reproducible builds:
-    ///
-    /// * Remove the workspace prefix,
-    ///   so the same source will give the same hash in different locations.
-    /// * Paths outside the workspace are hashed as absolute paths,
-    ///   unless `trim_paths` is set,
-    ///   in which case they are not hashed at all.
-    pub fn stable_hash<S: hash::Hasher>(self, workspace: &Path, trim_paths: bool, into: &mut S) {
+    /// For paths, remove the workspace prefix so the same source will give the
+    /// same hash in different locations, helping reproducible builds.
+    pub fn stable_hash<S: hash::Hasher>(self, workspace: &Path, into: &mut S) {
         if self.is_path() {
             if let Ok(p) = self
                 .inner
@@ -576,11 +563,6 @@ impl SourceId {
             {
                 self.inner.kind.hash(into);
                 p.to_str().unwrap().hash(into);
-                return;
-            }
-
-            if trim_paths {
-                self.inner.kind.hash(into);
                 return;
             }
         }
@@ -683,7 +665,6 @@ impl fmt::Display for SourceId {
                 Ok(())
             }
             SourceKind::Path => write!(f, "{}", url_display(&self.inner.url)),
-            SourceKind::Builtin => write!(f, "builtin {}", url_display(&self.inner.url)),
             SourceKind::Registry | SourceKind::SparseRegistry => {
                 write!(f, "registry `{}`", self.display_registry_name())
             }
@@ -833,7 +814,7 @@ mod tests {
 
         let gen_hash = |source_id: SourceId| {
             let mut hasher = StableHasher::new();
-            source_id.stable_hash(ws_root, false, &mut hasher);
+            source_id.stable_hash(ws_root, &mut hasher);
             Hasher::finish(&hasher).to_string()
         };
 
@@ -866,10 +847,6 @@ mod tests {
         assert_data_eq!(gen_hash(source_id), str!["473480029881867801"].raw());
         assert_data_eq!(short_hash(&source_id), str!["199e591d94239206"].raw());
 
-        let source_id = SourceId::for_builtin().unwrap();
-        assert_data_eq!(gen_hash(source_id), str!["5062137541645472653"].raw());
-        assert_data_eq!(short_hash(&source_id), str!["8d93f21546534046"].raw());
-
         let path = &ws_root.join("crate");
         let source_id = SourceId::for_local_registry(path).unwrap();
         #[cfg(not(windows))]
@@ -901,44 +878,6 @@ mod tests {
             assert_data_eq!(gen_hash(source_id), str!["10423446877655960172"].raw());
             assert_data_eq!(short_hash(&source_id), str!["6c8ad69db585a790"].raw());
         }
-    }
-
-    #[test]
-    fn test_stable_hash_trim_paths() {
-        use std::hash::Hasher;
-        use std::path::Path;
-
-        use crate::util::StableHasher;
-
-        #[cfg(not(windows))]
-        let (ws_root, outside, elsewhere) = (
-            Path::new("/tmp/ws"),
-            Path::new("/tmp/crate"),
-            Path::new("/opt/crate"),
-        );
-        #[cfg(windows)]
-        let (ws_root, outside, elsewhere) = (
-            Path::new(r"C:\\tmp\ws"),
-            Path::new(r"C:\\tmp\crate"),
-            Path::new(r"D:\\opt\crate"),
-        );
-
-        let inside = &ws_root.join("crate");
-
-        let gen_hash = |path: &Path, trim_outside_path| {
-            let source_id = SourceId::for_path(path).unwrap();
-            let mut hasher = StableHasher::new();
-            source_id.stable_hash(ws_root, trim_outside_path, &mut hasher);
-            Hasher::finish(&hasher)
-        };
-
-        // Path sources outside workspace can be distinguished by their path unless trimmed.
-        // Path sources inside workspace are hashed relatively regardlessly.
-        assert_ne!(gen_hash(outside, false), gen_hash(elsewhere, false));
-        assert_eq!(gen_hash(outside, true), gen_hash(elsewhere, true));
-        assert_eq!(gen_hash(inside, false), gen_hash(inside, true));
-        assert_ne!(gen_hash(inside, true), gen_hash(outside, true));
-        assert_ne!(gen_hash(inside, true), gen_hash(elsewhere, true));
     }
 
     #[test]
