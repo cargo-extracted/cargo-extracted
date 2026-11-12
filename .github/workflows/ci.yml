@@ -110,24 +110,32 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Determine crate version
+      # Packaging resolves against crates.io only, so it works once the Cargo
+      # team has published the sibling crates this version requires. Until
+      # then the tree builds them from git (`siblings_from_git` in
+      # upstream.toml), and pre-release versions never see them published.
+      - name: Can this tree be packaged?
         id: version
         run: |
-          v=$(python3 -c 'import tomllib; print(tomllib.load(open("crates/cargo-resolver/Cargo.toml", "rb"))["package"]["version"])')
-          echo "version=$v" >> "$GITHUB_OUTPUT"
-          case "$v" in
-            *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
-            *)   echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
-          esac
-      # Packaging resolves against crates.io, which only works once the Cargo
-      # team has published the sibling crates, at release time. Pre-release
-      # versions skip it.
+          python3 - >> "$GITHUB_OUTPUT" <<'PY'
+          import tomllib
+          pin = tomllib.load(open("upstream.toml", "rb"))
+          version = pin["crate_version"]
+          reason = ""
+          if "-" in version:
+              reason = f"{version} is a pre-release; the sibling crates are not on crates.io until a Cargo release"
+          elif pin.get("siblings_from_git"):
+              reason = "crates.io does not have " + ", ".join(pin["siblings_from_git"]) + " at the required versions yet"
+          print(f"version={version}")
+          print(f"packageable={'true' if not reason else 'false'}")
+          print(f"reason={reason}")
+          PY
       - name: Package
-        if: steps.version.outputs.prerelease == 'false'
+        if: steps.version.outputs.packageable == 'true'
         run: cargo package --locked --no-verify -p cargo-ext-resolver
       - name: Package skipped
-        if: steps.version.outputs.prerelease == 'true'
-        run: echo "::notice::cargo package skipped for pre-release version ${{ steps.version.outputs.version }}; sibling crates are not on crates.io until a Cargo release"
+        if: steps.version.outputs.packageable == 'false'
+        run: echo "::notice::cargo package skipped for ${{ steps.version.outputs.version }}; ${{ steps.version.outputs.reason }}"
       - name: Docs
         run: cargo doc --locked --no-deps -p cargo-ext-resolver
         env:
