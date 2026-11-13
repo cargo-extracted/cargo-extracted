@@ -6,12 +6,16 @@
 # `sync.py plan` resolves nightly through the dated release manifest a day
 # behind, and stable through the manifest of the current release. A release
 # branch is cut the first time a release resolves onto Cargo's branch of that
-# name. Started by hand from the Actions tab; a `schedule` trigger can be
-# added here once the pushes and pull requests are known to work.
-# CONTRIBUTING.md has the variables, secrets and branch rules this expects.
+# name. Runs daily, and by hand from the Actions tab when a release lands
+# mid-day. CONTRIBUTING.md has the variables, secrets and branch rules this
+# expects.
 name: Sync
 
 on:
+  schedule:
+    # Nightlies land around 01:00 UTC; with a one day lag the manifest this
+    # run uses has existed for over a day.
+    - cron: "0 6 * * *"
   workflow_dispatch:
     inputs:
       channels:

@@ -63,8 +63,7 @@ nightlies, a day behind, from the dated release manifest so every sync
 names a commit a published toolchain was built with. When a Rust release
 ships, `rust-1.XX.0` is cut from `main`, with the patch series as it was
 just before Cargo's branch point, and synced to the release; point releases
-land on the same branch. The sync is run from
-the Actions tab for now. The crate's version
+land on the same branch. The crate's version
 is that of the upstream `cargo` crate: `0.102.0` is the code that ships with
 Rust 1.101. Nightly syncs carry a `-nightly` suffix and are never
 published.

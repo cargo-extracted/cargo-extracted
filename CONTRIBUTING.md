@@ -159,10 +159,12 @@ conflict resolution or an unported `[drift]` change. Fix the patch.
 
 ## Automation
 
-The Sync workflow is started by hand from the Actions tab; once its pushes
-and pull requests are known to work, a `schedule` trigger in `sync.yml`
-makes it daily. Nothing reaches crates.io until `PUBLISH_ENABLED` is `true`
-and a reviewer approves the `crates-io` environment.
+The Sync workflow runs daily at 06:00 UTC and whenever it is started from
+the Actions tab, for example the day a Rust release lands. Unattended, it
+keeps `main` at yesterday's nightly, cuts and syncs release branches, and
+opens a `sync-conflict` issue when the series stops applying. Nothing
+reaches crates.io until `PUBLISH_ENABLED` is `true` and a reviewer approves
+the `crates-io` environment.
 
 | Branch | Fed by |
 |---|---|
@@ -180,7 +182,7 @@ release branches automatically; cherry-pick them, as Cargo backports.
   `verify`, build and test on three platforms, conformance on the pinned
   toolchain, docs with warnings denied, `cargo package` for release
   versions.
-- `sync.yml`: run by hand. `sync.py plan` decides which branch each
+- `sync.yml`: daily, and by hand. `sync.py plan` decides which branch each
   channel lands on (`channels` also takes a release such as `1.99.1`, for a
   branch behind the current stable); `_sync-channel.yml` runs once per entry and opens or
   updates the pull request, or a `sync-conflict` issue.
