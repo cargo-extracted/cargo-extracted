@@ -73,7 +73,7 @@ index 345c384c4..01781ab21 100644
          is_lib: bool,
          target: Option<&str>,
 diff --git a/crates/cargo-resolver/src/workspace/features.rs b/crates/cargo-resolver/src/workspace/features.rs
-index 70e425346..7226cb58e 100644
+index 6befb82c3..db142c2a0 100644
 --- a/crates/cargo-resolver/src/workspace/features.rs
 +++ b/crates/cargo-resolver/src/workspace/features.rs
 @@ -125,6 +125,7 @@ use std::path::PathBuf;

@@ -38,7 +38,7 @@ modules they name that are not moved files arrive in the following patches.
  .../cargo-resolver/src}/util/interning.rs     |  0
  .../cargo-resolver/src}/util/into_url.rs      |  0
  .../src}/util/local_poll_adapter.rs           |  0
- crates/cargo-resolver/src/util/mod.rs         | 46 ++++++++++
+ crates/cargo-resolver/src/util/mod.rs         | 52 +++++++++++
  .../src}/util/semver_eval_ext.rs              |  0
  .../cargo-resolver/src}/util/semver_ext.rs    |  0
  .../cargo-resolver/src}/util/time_span.rs     |  0
@@ -49,7 +49,7 @@ modules they name that are not moved files arrive in the following patches.
  .../src}/workspace/package_id_spec.rs         |  0
  .../src}/workspace/source_id.rs               |  0
  .../cargo-resolver/src}/workspace/summary.rs  |  0
- 34 files changed, 259 insertions(+)
+ 34 files changed, 265 insertions(+)
  create mode 100644 crates/cargo-resolver/Cargo.toml
  create mode 100644 crates/cargo-resolver/src/collections.rs
  create mode 100644 crates/cargo-resolver/src/compiler/mod.rs
@@ -367,10 +367,10 @@ rename from src/util/local_poll_adapter.rs
 rename to crates/cargo-resolver/src/util/local_poll_adapter.rs
 diff --git a/crates/cargo-resolver/src/util/mod.rs b/crates/cargo-resolver/src/util/mod.rs
 new file mode 100644
-index 000000000..880c39bb1
+index 000000000..92d2e3d21
 --- /dev/null
 +++ b/crates/cargo-resolver/src/util/mod.rs
-@@ -0,0 +1,46 @@
+@@ -0,0 +1,52 @@
 +//! The paths Cargo's `util` module provides to the moved files.
 +//!
 +//! The files declared here are Cargo's. The re-exports follow Cargo's
@@ -388,6 +388,12 @@ index 000000000..880c39bb1
 +pub use crate::context::GlobalContext;
 +
 +pub mod canonical_url;
++/// Cargo's `util::data_structures`, which moved to `cargo_util::collections`
++/// upstream. The aliases are the same, so the series applies on either side
++/// of that move.
++pub mod data_structures {
++    pub use crate::collections::*;
++}
 +pub mod edit_distance;
 +pub mod errors;
 +pub mod graph;

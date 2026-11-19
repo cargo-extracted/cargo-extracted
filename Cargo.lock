@@ -13,9 +13,9 @@ dependencies = [
 
 [[package]]
 name = "annotate-snippets"
-version = "0.12.16"
+version = "0.12.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f211a51805bc641f3ad5b7664c77d2547af685cc33b4cd8d31964027a46f13f1"
+checksum = "0258346f92c78dbc5b336b9a5b27c64447aa10643bc64e651db2edb145361564"
 dependencies = [
  "anstyle",
  "memchr",
@@ -189,7 +189,7 @@ dependencies = [
 [[package]]
 name = "cargo-platform"
 version = "0.3.5"
-source = "git+https://github.com/rust-lang/cargo.git?rev=ede6cefea9731cb595942338824c2f9a610b8189#ede6cefea9731cb595942338824c2f9a610b8189"
+source = "git+https://github.com/rust-lang/cargo.git?rev=f93c676e3e7ab1aee08dc95d869700f6b99a1a20#f93c676e3e7ab1aee08dc95d869700f6b99a1a20"
 dependencies = [
  "serde",
  "serde_core",
@@ -197,8 +197,8 @@ dependencies = [
 
 [[package]]
 name = "cargo-util"
-version = "0.3.0"
-source = "git+https://github.com/rust-lang/cargo.git?rev=ede6cefea9731cb595942338824c2f9a610b8189#ede6cefea9731cb595942338824c2f9a610b8189"
+version = "0.4.0"
+source = "git+https://github.com/rust-lang/cargo.git?rev=f93c676e3e7ab1aee08dc95d869700f6b99a1a20#f93c676e3e7ab1aee08dc95d869700f6b99a1a20"
 dependencies = [
  "anyhow",
  "core-foundation",
@@ -222,14 +222,14 @@ dependencies = [
 
 [[package]]
 name = "cargo-util-schemas"
-version = "0.16.1"
-source = "git+https://github.com/rust-lang/cargo.git?rev=ede6cefea9731cb595942338824c2f9a610b8189#ede6cefea9731cb595942338824c2f9a610b8189"
+version = "0.17.0"
+source = "git+https://github.com/rust-lang/cargo.git?rev=f93c676e3e7ab1aee08dc95d869700f6b99a1a20#f93c676e3e7ab1aee08dc95d869700f6b99a1a20"
 dependencies = [
  "jiff",
  "semver",
  "serde",
  "serde-untagged",
- "thiserror 2.0.18",
+ "thiserror 2.0.21",
  "toml",
  "unicode-ident",
  "url",
@@ -366,7 +366,7 @@ version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "10d60334b3b2e7c9d91ef8150abfb6fa4c1c39ebbcf4a81c2e346aad939fee3e"
 dependencies = [
- "thiserror 2.0.18",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -1372,6 +1372,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "syn"
+version = "3.0.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ae9ccbea3a7b0b09443036490c8f34a8b1b760fd345e5c0dae0aac718faea79"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "unicode-ident",
+]
+
+[[package]]
 name = "synstructure"
 version = "0.12.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1418,11 +1429,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "2.0.18"
+version = "2.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4288b5bcbc7920c07a1149a35cf9590a2aa808e0bc1eafaade0b80947865fbc4"
+checksum = "09e52cb86a36cede5cb101bf8908837b3e4c6e5e59fe7fd85c23fb56200d189e"
 dependencies = [
- "thiserror-impl 2.0.18",
+ "thiserror-impl 2.0.21",
 ]
 
 [[package]]
@@ -1438,13 +1449,13 @@ dependencies = [
 
 [[package]]
 name = "thiserror-impl"
-version = "2.0.18"
+version = "2.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ebc4ee7f67670e9b64d05fa4253e753e016c6c95ff35b89b7941d6b856dec1d5"
+checksum = "fe5197923287db20a58125f0bc85c062f7f2c892de97b18c356f9efb14b28524"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.118",
+ "syn 3.0.10",
 ]
 
 [[package]]
