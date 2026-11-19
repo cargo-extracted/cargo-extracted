@@ -163,7 +163,7 @@ dependencies = [
 
 [[package]]
 name = "cargo-ext-resolver"
-version = "0.103.0-nightly"
+version = "0.101.0"
 dependencies = [
  "annotate-snippets",
  "anyhow",
@@ -188,8 +188,9 @@ dependencies = [
 
 [[package]]
 name = "cargo-platform"
-version = "0.3.5"
-source = "git+https://github.com/rust-lang/cargo.git?rev=ede6cefea9731cb595942338824c2f9a610b8189#ede6cefea9731cb595942338824c2f9a610b8189"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd0061da739915fae12ea00e16397555ed4371a6bb285431aab930f61b0aa4ba"
 dependencies = [
  "serde",
  "serde_core",
@@ -197,20 +198,19 @@ dependencies = [
 
 [[package]]
 name = "cargo-util"
-version = "0.3.0"
-source = "git+https://github.com/rust-lang/cargo.git?rev=ede6cefea9731cb595942338824c2f9a610b8189#ede6cefea9731cb595942338824c2f9a610b8189"
+version = "0.2.33"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33ab36e328ebd4ef4b7cf9a4532018012caf9facfd28426a0d5683dce92aeb46"
 dependencies = [
  "anyhow",
  "core-foundation",
  "filetime",
  "hex",
  "ignore",
- "indexmap",
  "jobserver",
  "libc",
  "miow",
  "portable-atomic",
- "rustc-hash 2.1.2",
  "same-file",
  "sha2",
  "shell-escape",
@@ -222,13 +222,15 @@ dependencies = [
 
 [[package]]
 name = "cargo-util-schemas"
-version = "0.16.1"
-source = "git+https://github.com/rust-lang/cargo.git?rev=ede6cefea9731cb595942338824c2f9a610b8189#ede6cefea9731cb595942338824c2f9a610b8189"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f6852a6fffb5443e5c26155532745f3db7eec431e31581da2f844c0a437c8ff"
 dependencies = [
  "jiff",
  "semver",
  "serde",
  "serde-untagged",
+ "serde-value",
  "thiserror 2.0.18",
  "toml",
  "unicode-ident",
@@ -1220,6 +1222,16 @@ dependencies = [
  "serde",
  "serde_core",
  "typeid",
+]
+
+[[package]]
+name = "serde-value"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f3a1a3341211875ef120e117ea7fd5228530ae7e7036a779fdc9117be6b3282c"
+dependencies = [
+ "ordered-float",
+ "serde",
 ]
 
 [[package]]
