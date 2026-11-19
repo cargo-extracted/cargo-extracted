@@ -1,4 +1,4 @@
-use cargo_util::collections::HashMap;
+use crate::util::data_structures::HashMap;
 
 use anyhow::{Context as _, bail};
 

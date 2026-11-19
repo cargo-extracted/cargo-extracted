@@ -1,4 +1,4 @@
-use cargo_util::collections::HashMap;
+use crate::util::data_structures::HashMap;
 use futures::{FutureExt, future::LocalBoxFuture, stream::FuturesUnordered};
 use std::{hash::Hash, ops::Deref, task::Poll};
 
