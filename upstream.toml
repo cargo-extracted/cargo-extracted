@@ -8,6 +8,6 @@ channel_date = "2026-11-12"
 rust_version = "1.100.0 (0ef1bc386 2026-11-09)"
 cargo_version = "0.101.0"
 crate_version = "0.101.0"
-synced_at = "2026-11-19T23:45:13Z"
+synced_at = "2026-11-19T23:52:58Z"
 siblings = { cargo-platform = "0.3.3", cargo-util = "0.2.33", cargo-util-schemas = "0.15.0" }
 siblings_from_git = []

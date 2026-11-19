@@ -15,6 +15,12 @@ pub use self::semver_ext::*;
 pub use crate::context::GlobalContext;
 
 pub mod canonical_url;
+/// Cargo's `util::data_structures`, which moved to `cargo_util::collections`
+/// upstream. The aliases are the same, so the series applies on either side
+/// of that move.
+pub mod data_structures {
+    pub use crate::collections::*;
+}
 pub mod edit_distance;
 pub mod errors;
 pub mod graph;
