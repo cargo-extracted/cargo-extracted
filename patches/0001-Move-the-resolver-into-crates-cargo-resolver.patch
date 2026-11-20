@@ -15,7 +15,8 @@ The crate manifest, `lib.rs` and the `mod.rs` files declare that tree and
 re-export what Cargo's `util/mod.rs` and `workspace/mod.rs` re-export. The
 modules they name that are not moved files arrive in the following patches.
 ---
- crates/cargo-resolver/Cargo.toml              | 40 +++++++++
+ crates/cargo-resolver/Cargo.toml              | 41 +++++++++
+ crates/cargo-resolver/README.md               | 40 +++++++++
  crates/cargo-resolver/src/collections.rs      | 10 +++
  crates/cargo-resolver/src/compiler/mod.rs     | 13 +++
  crates/cargo-resolver/src/lib.rs              | 90 +++++++++++++++++++
@@ -49,8 +50,9 @@ modules they name that are not moved files arrive in the following patches.
  .../src}/workspace/package_id_spec.rs         |  0
  .../src}/workspace/source_id.rs               |  0
  .../cargo-resolver/src}/workspace/summary.rs  |  0
- 34 files changed, 265 insertions(+)
+ 35 files changed, 306 insertions(+)
  create mode 100644 crates/cargo-resolver/Cargo.toml
+ create mode 100644 crates/cargo-resolver/README.md
  create mode 100644 crates/cargo-resolver/src/collections.rs
  create mode 100644 crates/cargo-resolver/src/compiler/mod.rs
  create mode 100644 crates/cargo-resolver/src/lib.rs
@@ -87,10 +89,10 @@ modules they name that are not moved files arrive in the following patches.
 
 diff --git a/crates/cargo-resolver/Cargo.toml b/crates/cargo-resolver/Cargo.toml
 new file mode 100644
-index 000000000..27b9472c2
+index 000000000..16645d8e5
 --- /dev/null
 +++ b/crates/cargo-resolver/Cargo.toml
-@@ -0,0 +1,40 @@
+@@ -0,0 +1,41 @@
 +[package]
 +name = "cargo-ext-resolver"
 +version = "0.0.0"
@@ -99,6 +101,7 @@ index 000000000..27b9472c2
 +license.workspace = true
 +repository.workspace = true
 +documentation = "https://docs.rs/cargo-ext-resolver"
++readme = "README.md"
 +description = "Cargo's dependency resolver"
 +
 +# The library keeps the name of Cargo's module, so code reads as it does
@@ -131,6 +134,52 @@ index 000000000..27b9472c2
 +
 +[lints]
 +workspace = true
+diff --git a/crates/cargo-resolver/README.md b/crates/cargo-resolver/README.md
+new file mode 100644
+index 000000000..b9ccf43f0
+--- /dev/null
++++ b/crates/cargo-resolver/README.md
+@@ -0,0 +1,40 @@
++# cargo-ext-resolver
++
++Cargo's dependency resolver and feature resolver as a standalone crate: the
++files of Cargo's `resolver` module and the types they operate on, moved out of
++the `cargo` crate and left as Cargo wrote them.
++
++> This crate is maintained by the Cargo team, primarily for use by Cargo and
++> not intended for external use (except as a transitive dependency). This
++> crate may make major changes to its APIs or be deprecated without warning.
++
++That disclaimer is Cargo's, and it applies here just the same. The code is
++Cargo's; nothing in what it decides is changed, and behavior that differs
++from Cargo is a bug in this crate, not a feature. Changes to the resolver
++itself belong in rust-lang/cargo and arrive here with the next sync.
++
++The version follows the `cargo` crate: `cargo-ext-resolver 0.101.0` is the
++resolver of `cargo 0.101.0`, which ships with Rust 1.100. The library is
++`cargo_resolver`, after Cargo's module, and the package name carries an `ext`
++marker so it is not mistaken for a crate the Cargo team publishes. Alias it,
++so code reads as it does upstream:
++
++```toml
++[dependencies]
++cargo-resolver = { package = "cargo-ext-resolver", version = "0.101.0" }
++```
++
++The entry point is `resolve`, as in Cargo: the `Summary` of each root package
++with its `ResolveOpts`, a `Registry` to query candidates from,
++`VersionPreferences`, and a `GlobalContext`. `FeatureResolver` is the second
++pass, and `encode` converts a `Resolve` to and from `Cargo.lock`.
++`GlobalContext` stands in for Cargo's, with Cargo's method names: the
++configuration Cargo would have read, as a TOML table you fill, and a `Shell`
++to print to. Where the moved code holds a `Workspace`, `Package`,
++`PackageSet`, `Target` or `RustcTargetData`, stand-ins with the methods it
++calls take their place, built from what you know. The crate performs no I/O.
++
++How the crate is produced, and the rest of the series it belongs to, is
++described at https://github.com/cargo-extracted/cargo-extracted.
++
++License: MIT OR Apache-2.0, Cargo's.
 diff --git a/crates/cargo-resolver/src/collections.rs b/crates/cargo-resolver/src/collections.rs
 new file mode 100644
 index 000000000..7a1be1750
