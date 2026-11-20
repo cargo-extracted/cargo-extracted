@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 documentation = "https://docs.rs/cargo-ext-resolver"
+readme = "README.md"
 description = "Cargo's dependency resolver"
 
 # The library keeps the name of Cargo's module, so code reads as it does
